@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --otzar-bg: #ffffff;
+  --otzar-surface: #fff7ed;
+  --otzar-surface-alt: #f8fafc;
+  --otzar-border: #fed7aa;
+  --otzar-border-muted: #e2e8f0;
+  --otzar-text: #1e293b;
+  --otzar-text-muted: #64748b;
+  --otzar-accent: #ea580c;
+  --otzar-accent-hover: #c2410c;
+  --otzar-accent-soft: #ffedd5;
+}
+
+:root[data-theme="classic-blue"] {
+  --otzar-surface: #eff6ff;
+  --otzar-border: #bfdbfe;
+  --otzar-accent: #1d4ed8;
+  --otzar-accent-hover: #1e40af;
+  --otzar-accent-soft: #dbeafe;
+}
+
+:root[data-theme="forest-green"] {
+  --otzar-surface: #ecfdf5;
+  --otzar-border: #a7f3d0;
+  --otzar-accent: #047857;
+  --otzar-accent-hover: #065f46;
+  --otzar-accent-soft: #d1fae5;
+}
+
+.dark {
+  --otzar-bg: #0f172a;
+  --otzar-surface: #1e293b;
+  --otzar-surface-alt: #162032;
+  --otzar-border: #334155;
+  --otzar-border-muted: #334155;
+  --otzar-text: #f8fafc;
+  --otzar-text-muted: #94a3b8;
+  --otzar-accent: #f97316;
+  --otzar-accent-hover: #ea580c;
+  --otzar-accent-soft: #431407;
+}
+
+html, body, #root {
+  min-height: 100%;
+  margin: 0;
+  background-color: var(--otzar-bg);
+  color: var(--otzar-text);
+  font-family: "Heebo", "Segoe UI", "Roboto", "Arial", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}

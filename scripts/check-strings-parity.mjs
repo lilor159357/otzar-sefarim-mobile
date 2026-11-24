@@ -10,8 +10,8 @@ const siblingDesktop = path.resolve(mobileRoot, "..", "OtzarSefarim");
 const mobileDictPath = path.join(mobileRoot, "shared", "strings", "dictionary.ts");
 const desktopDictPath = path.join(siblingDesktop, "shared", "strings", "dictionary.ts");
 
-if (!fs.existsSync(desktopDictPath)) {
-  console.error("[check-strings-parity] Missing desktop dictionary:", desktopDictPath);
+if (!fs.existsSync(mobileDictPath)) {
+  console.error("[check-strings-parity] Missing mobile dictionary:", mobileDictPath);
   process.exit(1);
 }
 

@@ -213,7 +213,7 @@ public class AppUpdaterPlugin extends Plugin {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            sb.append(line).append("\n");
+                            sb.append(line).append((char) 10);
                         }
                     }
                 }

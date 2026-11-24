@@ -72,6 +72,45 @@ export function parseFirebaseConfigRaw(input: unknown): FirebaseWebConfig | null
   };
 }
 
+export function isMobileQrPairingCode(rawInput: string): boolean {
+  return String(rawInput || "").trim().startsWith("OTZAR-QR1:");
+}
+
+export function parseMobileQrPairingCode(rawInput: string): MobileConnectionConfig {
+  const trimmed = String(rawInput || "").trim();
+  if (!trimmed.startsWith("OTZAR-QR1:")) {
+    throw new Error("הברקוד שנסרק אינו ברקוד חיבור מהיר של אוצר ספרים");
+  }
+  let payload: Record<string, unknown>;
+  try {
+    const rawBytes = base64UrlToBytes(trimmed.slice("OTZAR-QR1:".length).trim());
+    const jsonStr = new TextDecoder().decode(inflateSync(rawBytes));
+    payload = JSON.parse(jsonStr) as Record<string, unknown>;
+  } catch {
+    throw new Error("ברקוד החיבור אינו תקין או שנקטע חלקית — נסה לסרוק שוב");
+  }
+
+  const fbConfig = parseFirebaseConfigRaw(payload?.f);
+  const email = String(payload?.e || "").trim();
+  const password = String(payload?.w || "");
+  if (!fbConfig || !email || !password) {
+    throw new Error("ברקוד החיבור אינו כולל פרטי Firebase מלאים");
+  }
+
+  const tp = payload?.tp;
+  const themePreset = tp === "classic-blue" || tp === "forest-green" ? tp : "default";
+  const themeMode = payload?.tm === "dark" ? "dark" : "light";
+
+  return {
+    firebaseConfig: fbConfig,
+    email,
+    password,
+    libraryName: String(payload?.n || "").trim() || "אוצר ספרים",
+    themePreset,
+    themeMode,
+  };
+}
+
 export async function decryptDesktopSetupBundle(rawInput: string, passcodeRaw: string): Promise<MobileConnectionConfig> {
   const trimmed = String(rawInput || "").trim();
   const passcode = String(passcodeRaw || "").trim();

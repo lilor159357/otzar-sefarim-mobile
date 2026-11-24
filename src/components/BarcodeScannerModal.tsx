@@ -6,6 +6,11 @@ import { X, ScanLine, Keyboard } from "lucide-react";
 interface BarcodeScannerModalProps {
   open: boolean;
   title?: string;
+  formatsMode?: "all" | "qr";
+  hintText?: string;
+  manualInputMode?: "numeric" | "text";
+  manualLabel?: string;
+  manualPlaceholder?: string;
   onDetected: (barcode: string) => void;
   onClose: () => void;
 }
@@ -13,6 +18,11 @@ interface BarcodeScannerModalProps {
 export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   open,
   title = "סריקת ברקוד ספר",
+  formatsMode = "all",
+  hintText,
+  manualInputMode = "numeric",
+  manualLabel = "או הזן מספר ברקוד ידנית:",
+  manualPlaceholder = "למשל: 100001",
   onDetected,
   onClose,
 }) => {
@@ -42,13 +52,21 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           return;
         }
         const hints = new Map();
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.EAN_13,
-          BarcodeFormat.EAN_8,
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.QR_CODE,
-        ]);
+        hints.set(
+          DecodeHintType.POSSIBLE_FORMATS,
+          formatsMode === "qr"
+            ? [BarcodeFormat.QR_CODE]
+            : [
+                BarcodeFormat.CODE_128,
+                BarcodeFormat.EAN_13,
+                BarcodeFormat.EAN_8,
+                BarcodeFormat.CODE_39,
+                BarcodeFormat.QR_CODE,
+              ]
+        );
+        if (formatsMode === "qr") {
+          hints.set(DecodeHintType.TRY_HARDER, true);
+        }
         const reader = new BrowserMultiFormatReader(hints);
         const videoEl = videoRef.current;
         if (!videoEl || cancelled) return;
@@ -56,9 +74,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         const controls = await reader.decodeFromConstraints(
           {
             audio: false,
-            video: {
-              facingMode: { ideal: "environment" },
-            },
+            video:
+              formatsMode === "qr"
+                ? {
+                    facingMode: { ideal: "environment" },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                  }
+                : {
+                    facingMode: { ideal: "environment" },
+                  },
           },
           videoEl,
           (result) => {
@@ -95,7 +120,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       controlsRef.current?.stop();
       controlsRef.current = null;
     };
-  }, [open, onDetected]);
+  }, [open, onDetected, formatsMode]);
 
   if (!open) return null;
 
@@ -134,8 +159,19 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               autoPlay
             />
             {!cameraError && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="h-28 w-4/5 rounded-2xl border-2 border-[var(--otzar-accent)] shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2">
+                <div
+                  className={
+                    formatsMode === "qr"
+                      ? "h-48 w-48 rounded-2xl border-2 border-[var(--otzar-accent)] shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]"
+                      : "h-28 w-4/5 rounded-2xl border-2 border-[var(--otzar-accent)] shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+                  }
+                />
+                {hintText && (
+                  <span className="rounded-lg bg-black/70 px-2.5 py-1 text-xs font-medium text-white">
+                    {hintText}
+                  </span>
+                )}
               </div>
             )}
             {cameraError && (
@@ -148,15 +184,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           <form onSubmit={submitManual} className="space-y-2">
             <label className="flex items-center gap-1.5 text-xs font-medium text-[var(--otzar-text-muted)]">
               <Keyboard className="h-4 w-4" />
-              <span>או הזן מספר ברקוד ידנית:</span>
+              <span>{manualLabel}</span>
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
-                inputMode="numeric"
+                inputMode={manualInputMode}
+                dir="ltr"
                 value={manualCode}
                 onChange={(e) => setManualCode(e.target.value)}
-                placeholder="למשל: 100001"
+                placeholder={manualPlaceholder}
                 className="min-h-[44px] flex-1 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-base text-[var(--otzar-text)] tabular-nums outline-none focus:border-[var(--otzar-accent)]"
               />
               <button

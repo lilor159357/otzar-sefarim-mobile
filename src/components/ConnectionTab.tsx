@@ -14,9 +14,16 @@ import {
   Download,
   ExternalLink,
   ShieldCheck,
+  QrCode,
 } from "lucide-react";
 import type { MobileConnectionConfig, SyncSnapshot } from "../types.ts";
-import { decryptDesktopSetupBundle, parseFirebaseConfigRaw } from "../lib/setupDecrypt.ts";
+import {
+  decryptDesktopSetupBundle,
+  isMobileQrPairingCode,
+  parseFirebaseConfigRaw,
+  parseMobileQrPairingCode,
+} from "../lib/setupDecrypt.ts";
+import { BarcodeScannerModal } from "./BarcodeScannerModal.tsx";
 import {
   formatBytesHe,
   isNativeAndroid,
@@ -82,9 +89,11 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
   const [manualPassword, setManualPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const passcodeInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -99,12 +108,58 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
     }
   };
 
+  const connectFromQrCode = async (rawCode: string) => {
+    const trimmed = String(rawCode || "").trim();
+    if (!trimmed) return;
+    setQrScannerOpen(false);
+    setFeedback(null);
+
+    if (isMobileQrPairingCode(trimmed)) {
+      setBusy(true);
+      try {
+        const cfg = parseMobileQrPairingCode(trimmed);
+        await onConnectConfig(cfg);
+        setBundleText("");
+        setPasscode("");
+        setFeedback({
+          type: "ok",
+          text: "החיבור למחשב הצליח בסריקת ברקוד והספרייה סונכרנה למכשיר!",
+        });
+      } catch (err: unknown) {
+        setFeedback({
+          type: "err",
+          text: err instanceof Error ? err.message : "שגיאה בחיבור מהברקוד",
+        });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (trimmed.startsWith("OTZAR-SETUP:") || trimmed.startsWith("{")) {
+      setBundleText(trimmed);
+      setFeedback({
+        type: "ok",
+        text: "קוד ההעברה נסרק! הזן את קוד האבטחה ולחץ על 'פענח והתחבר לענן'.",
+      });
+      window.setTimeout(() => passcodeInputRef.current?.focus(), 100);
+      return;
+    }
+
+    setFeedback({
+      type: "err",
+      text: "הברקוד שנסרק אינו ברקוד חיבור של אוצר ספרים.",
+    });
+  };
+
   const handleConnectViaBundle = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setFeedback(null);
     try {
-      const decrypted = await decryptDesktopSetupBundle(bundleText, passcode);
+      const decrypted = isMobileQrPairingCode(bundleText)
+        ? parseMobileQrPairingCode(bundleText)
+        : await decryptDesktopSetupBundle(bundleText, passcode);
       await onConnectConfig(decrypted);
       setBundleText("");
       setPasscode("");
@@ -171,8 +226,18 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
             <h2 className="text-base font-bold text-[var(--otzar-text)]">חיבור מהיר מהמחשב (בלחיצה אחת)</h2>
           </div>
           <p className="text-xs leading-relaxed text-[var(--otzar-text-muted)]">
-            בתוכנת המחשב היכנס ל<b>הגדרות ומפה ← העברה למכשיר אחר</b>, צור קוד העברה (`OTZAR-SETUP:...`) או קובץ `.otzar-setup` והדבק/טען כאן.
+            בתוכנת המחשב היכנס ל<b>הגדרות ומפה ← סנכרון ענן</b> (או <b>העברה למכשיר אחר</b>), לחץ על <b>&quot;הצג ברקוד לחיבור מהיר&quot;</b> וסרוק מהטלפון — או טען קובץ <code>.otzar-setup</code>.
           </p>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setQrScannerOpen(true)}
+            className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[var(--otzar-accent)] px-4 font-bold text-white shadow-sm active:scale-[0.98] disabled:opacity-45"
+          >
+            <QrCode className="h-5 w-5" />
+            <span>סרוק ברקוד (QR) ממסך המחשב</span>
+          </button>
 
           <form onSubmit={handleConnectViaBundle} className="space-y-2.5">
             <input
@@ -203,18 +268,20 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
             <div className="relative">
               <KeyRound className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--otzar-text-muted)]" />
               <input
+                ref={passcodeInputRef}
                 type="password"
                 value={passcode}
                 onChange={(e) => setPasscode(e.target.value)}
-                placeholder="קוד האבטחה שהגדרת בייצוא"
-                className="min-h-[44px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] pl-3 pr-9 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
+                placeholder={isMobileQrPairingCode(bundleText) ? "אין צורך בקוד עבור OTZAR-QR1" : "קוד האבטחה שהגדרת בייצוא"}
+                disabled={isMobileQrPairingCode(bundleText)}
+                className="min-h-[44px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] pl-3 pr-9 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)] disabled:opacity-50"
               />
             </div>
 
             <button
               type="submit"
-              disabled={busy || !bundleText.trim() || !passcode.trim()}
-              className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[var(--otzar-accent)] px-4 font-bold text-white shadow-sm active:scale-[0.98] disabled:opacity-45"
+              disabled={busy || !bundleText.trim() || (!isMobileQrPairingCode(bundleText) && !passcode.trim())}
+              className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl border border-[var(--otzar-accent)] px-4 font-bold text-[var(--otzar-accent)] active:scale-[0.98] disabled:opacity-45"
             >
               <span>{busy ? "מאמת ומושך נתונים..." : "פענח והתחבר לענן"}</span>
             </button>
@@ -574,6 +641,20 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
           </section>
         </div>
       </div>
+
+      <BarcodeScannerModal
+        open={qrScannerOpen}
+        title="סריקת ברקוד חיבור מהמחשב"
+        formatsMode="qr"
+        hintText="כוון את המצלמה אל ברקוד ה-QR שעל מסך המחשב"
+        manualInputMode="text"
+        manualLabel="או הדבק קוד חיבור מהמחשב:"
+        manualPlaceholder="OTZAR-QR1:... או OTZAR-SETUP:..."
+        onDetected={(code) => {
+          void connectFromQrCode(code);
+        }}
+        onClose={() => setQrScannerOpen(false)}
+      />
     </div>
   );
 };

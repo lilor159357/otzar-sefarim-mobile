@@ -435,6 +435,7 @@ export class MobileOtzarClient {
     setBatchId?: string | null;
     isShelfSet?: boolean;
     presetSetName?: string | null;
+    titleImagesCount?: number;
     onPickedUp?: (relayId: string) => void;
   }): Promise<string> {
     if (!this.firestore) {
@@ -455,7 +456,7 @@ export class MobileOtzarClient {
     await setDoc(doc(this.firestore, "ai_relay_queue", relayId), {
       relay_id: relayId,
       image_base64: params.mainBase64,
-      extra_images_base64: params.extraBase64s.slice(0, 3),
+      extra_images_base64: params.extraBase64s.slice(0, 5),
       mime_type: "image/jpeg",
       default_cabinet_sync_id: params.cabinetSyncId,
       default_cabinet_code: params.cabinetCode,
@@ -463,6 +464,9 @@ export class MobileOtzarClient {
       set_batch_id: params.setBatchId || null,
       is_shelf_set: Boolean(params.isShelfSet),
       preset_set_name: params.presetSetName || "",
+      ...(typeof params.titleImagesCount === "number"
+        ? { title_images_count: Math.max(0, Math.round(params.titleImagesCount)) }
+        : {}),
       created_at: nowIso,
       device_id: this.deviceId,
     });

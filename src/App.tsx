@@ -411,6 +411,7 @@ export function App() {
         {activeTab === "relay" && (
           <AiRelayTab
             cabinets={data.cabinets}
+            books={data.books}
             connected={sync.connected}
             onSendRelay={(params) => client.sendRelayPhotos(params)}
           />

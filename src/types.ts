@@ -100,6 +100,7 @@ export interface RelaySentItem {
   setBatchId?: string | null;
   isShelfSet?: boolean;
   presetSetName?: string;
+  titleImagesCount?: number;
 }
 
 export interface SyncSnapshot {

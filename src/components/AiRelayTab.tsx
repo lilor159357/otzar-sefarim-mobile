@@ -1,13 +1,29 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
-import { Camera as CameraIcon, ImagePlus, Send, Trash2, CheckCircle2, AlertTriangle, Minus, Plus, Star, BookCopy, Layers, RotateCcw } from "lucide-react";
-import type { CabinetDoc, RelaySentItem } from "../types.ts";
+import {
+  Camera as CameraIcon,
+  ImagePlus,
+  Send,
+  Trash2,
+  CheckCircle2,
+  AlertTriangle,
+  Minus,
+  Plus,
+  Star,
+  BookCopy,
+  Layers,
+  RotateCcw,
+  Search,
+  X,
+} from "lucide-react";
+import type { BookDoc, CabinetDoc, RelaySentItem } from "../types.ts";
 import { compressImageDataUrl, compressBatchForRelay, type CompressedCapture } from "../lib/imageCompress.ts";
 import { loadRelayHistory, saveRelayHistory } from "../lib/mobileFirebase.ts";
 
 interface AiRelayTabProps {
   cabinets: CabinetDoc[];
+  books: BookDoc[];
   connected: boolean;
   onSendRelay: (params: {
     mainBase64: string;
@@ -18,8 +34,43 @@ interface AiRelayTabProps {
     setBatchId?: string | null;
     isShelfSet?: boolean;
     presetSetName?: string | null;
+    titleImagesCount?: number;
     onPickedUp?: (relayId: string) => void;
   }) => Promise<string>;
+}
+
+interface ExistingSetOption {
+  setName: string;
+  author: string;
+  count: number;
+  cabinetSyncId: string | null;
+  cabinetCode: string | null;
+  shelfNumber: number | null;
+  updatedAt: string;
+}
+
+const STICKY_STORAGE_KEY = "otzar_mobile_sticky_set_v1";
+
+interface PersistedStickyState {
+  captureMode?: "standard" | "shelf-set";
+  stickySetEnabled?: boolean;
+  stickyBatchId?: string;
+  stickyBatchCount?: number;
+  presetSetName?: string;
+  cabinetSyncId?: string;
+  shelfNumber?: number;
+  useShelf?: boolean;
+}
+
+function loadStickyState(): PersistedStickyState {
+  try {
+    const raw = localStorage.getItem(STICKY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -33,20 +84,30 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export const AiRelayTab: React.FC<AiRelayTabProps> = ({
   cabinets,
+  books,
   connected,
   onSendRelay,
 }) => {
-  const [captureMode, setCaptureMode] = useState<"standard" | "shelf-set">("standard");
+  const initialSticky = useMemo(() => loadStickyState(), []);
+
+  const [captureMode, setCaptureMode] = useState<"standard" | "shelf-set">(
+    initialSticky.captureMode === "shelf-set" ? "shelf-set" : "standard"
+  );
   const [photos, setPhotos] = useState<CompressedCapture[]>([]);
-  const [shelfTitlePhoto, setShelfTitlePhoto] = useState<CompressedCapture | null>(null);
+  const [shelfTitlePhotos, setShelfTitlePhotos] = useState<CompressedCapture[]>([]);
   const [shelfSpinePhotos, setShelfSpinePhotos] = useState<CompressedCapture[]>([]);
-  const [stickySetEnabled, setStickySetEnabled] = useState(false);
-  const [stickyBatchId, setStickyBatchId] = useState<string>(() => `mobbatch_${Date.now()}`);
-  const [stickyBatchCount, setStickyBatchCount] = useState<number>(0);
-  const [presetSetName, setPresetSetName] = useState<string>("");
-  const [cabinetSyncId, setCabinetSyncId] = useState<string>("");
-  const [shelfNumber, setShelfNumber] = useState<number>(1);
-  const [useShelf, setUseShelf] = useState<boolean>(true);
+  const [stickySetEnabled, setStickySetEnabled] = useState<boolean>(Boolean(initialSticky.stickySetEnabled));
+  const [stickyBatchId, setStickyBatchId] = useState<string>(
+    () => initialSticky.stickyBatchId || `mobbatch_${Date.now()}`
+  );
+  const [stickyBatchCount, setStickyBatchCount] = useState<number>(Number(initialSticky.stickyBatchCount) || 0);
+  const [presetSetName, setPresetSetName] = useState<string>(initialSticky.presetSetName || "");
+  const [cabinetSyncId, setCabinetSyncId] = useState<string>(initialSticky.cabinetSyncId || "");
+  const [shelfNumber, setShelfNumber] = useState<number>(Math.max(1, Number(initialSticky.shelfNumber) || 1));
+  const [useShelf, setUseShelf] = useState<boolean>(initialSticky.useShelf !== false);
+
+  const [showExistingPicker, setShowExistingPicker] = useState(false);
+  const [existingFilter, setExistingFilter] = useState("");
   const [sending, setSending] = useState(false);
   const [processingPhoto, setProcessingPhoto] = useState(false);
   const [history, setHistory] = useState<RelaySentItem[]>(() => loadRelayHistory());
@@ -56,17 +117,95 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const activeCaptureSlotRef = useRef<"standard" | "shelf-title" | "shelf-spine">("standard");
 
+  useEffect(() => {
+    try {
+      const payload: PersistedStickyState = {
+        captureMode,
+        stickySetEnabled,
+        stickyBatchId,
+        stickyBatchCount,
+        presetSetName,
+        cabinetSyncId,
+        shelfNumber,
+        useShelf,
+      };
+      localStorage.setItem(STICKY_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+  }, [captureMode, stickySetEnabled, stickyBatchId, stickyBatchCount, presetSetName, cabinetSyncId, shelfNumber, useShelf]);
+
+  const existingSets = useMemo<ExistingSetOption[]>(() => {
+    const map = new Map<string, ExistingSetOption>();
+    for (const b of books) {
+      if (b.deleted_at) continue;
+      const name = String(b.set_name || "").trim();
+      if (!name) continue;
+      const existing = map.get(name);
+      if (!existing) {
+        map.set(name, {
+          setName: name,
+          author: String(b.author || "").trim(),
+          count: 1,
+          cabinetSyncId: b.cabinet_sync_id || null,
+          cabinetCode: b.cabinet_code || null,
+          shelfNumber: b.shelf_number ?? null,
+          updatedAt: String(b.updated_at || ""),
+        });
+      } else {
+        existing.count += 1;
+        if (b.updated_at && b.updated_at > existing.updatedAt) {
+          existing.updatedAt = b.updated_at;
+          if (b.cabinet_sync_id) existing.cabinetSyncId = b.cabinet_sync_id;
+          if (b.cabinet_code) existing.cabinetCode = b.cabinet_code;
+          if (b.shelf_number) existing.shelfNumber = b.shelf_number;
+          if (!existing.author && b.author) existing.author = String(b.author).trim();
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.setName.localeCompare(b.setName, "he"));
+  }, [books]);
+
+  const filteredExistingSets = useMemo(() => {
+    const q = existingFilter.trim().toLowerCase();
+    if (!q) return existingSets.slice(0, 25);
+    return existingSets
+      .filter((s) => s.setName.toLowerCase().includes(q) || s.author.toLowerCase().includes(q))
+      .slice(0, 25);
+  }, [existingSets, existingFilter]);
+
+  const matchedExistingSet = useMemo(() => {
+    const q = presetSetName.trim();
+    if (!q) return null;
+    return existingSets.find((s) => s.setName === q) || null;
+  }, [existingSets, presetSetName]);
+
   const selectedCabinet = cabinets.find((c) => c.sync_id === cabinetSyncId) || null;
   const maxShelf = selectedCabinet?.shelves_count || 12;
+
+  const handleSelectExistingSet = (opt: ExistingSetOption) => {
+    setPresetSetName(opt.setName);
+    if (captureMode === "standard") {
+      setStickySetEnabled(true);
+      if (!stickyBatchId) setStickyBatchId(`mobbatch_${Date.now()}`);
+    }
+    if (opt.cabinetSyncId && cabinets.some((c) => c.sync_id === opt.cabinetSyncId)) {
+      setCabinetSyncId(opt.cabinetSyncId);
+      if (opt.shelfNumber) {
+        setUseShelf(true);
+        setShelfNumber(opt.shelfNumber);
+      }
+    }
+    setShowExistingPicker(false);
+    setExistingFilter("");
+  };
 
   const appendCompressedDataUrl = async (
     dataUrl: string,
     slot: "standard" | "shelf-title" | "shelf-spine" = activeCaptureSlotRef.current
   ) => {
-    const maxBudget = slot === "shelf-spine" ? 220000 : slot === "shelf-title" ? 380000 : 380000;
+    const maxBudget = slot === "shelf-spine" ? 200000 : slot === "shelf-title" ? 280000 : 380000;
     const compressed = await compressImageDataUrl(dataUrl, maxBudget);
     if (slot === "shelf-title") {
-      setShelfTitlePhoto(compressed);
+      setShelfTitlePhotos((prev) => [...prev, compressed].slice(0, 3));
     } else if (slot === "shelf-spine") {
       setShelfSpinePhotos((prev) => [...prev, compressed].slice(0, 3));
     } else {
@@ -79,6 +218,10 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     activeCaptureSlotRef.current = slot;
     if (slot === "standard" && photos.length >= 4) {
       setFeedback({ type: "err", text: "ניתן לצרף עד 4 תמונות במשלוח אחד (שדרה ראשית + שער/זוויות)." });
+      return;
+    }
+    if (slot === "shelf-title" && shelfTitlePhotos.length >= 3) {
+      setFeedback({ type: "err", text: "ניתן לצרף עד 3 תמונות שער ופרטים במשלוח אחד." });
       return;
     }
     if (slot === "shelf-spine" && shelfSpinePhotos.length >= 3) {
@@ -117,6 +260,10 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     activeCaptureSlotRef.current = slot;
     if (slot === "standard" && photos.length >= 4) {
       setFeedback({ type: "err", text: "ניתן לצרף עד 4 תמונות במשלוח אחד." });
+      return;
+    }
+    if (slot === "shelf-title" && shelfTitlePhotos.length >= 3) {
+      setFeedback({ type: "err", text: "ניתן לצרף עד 3 תמונות שער ופרטים במשלוח אחד." });
       return;
     }
     if (slot === "shelf-spine" && shelfSpinePhotos.length >= 3) {
@@ -161,7 +308,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     try {
       const limitCount =
         slot === "shelf-title"
-          ? 1
+          ? Math.max(0, 3 - shelfTitlePhotos.length)
           : slot === "shelf-spine"
           ? Math.max(0, 3 - shelfSpinePhotos.length)
           : Math.max(0, 4 - photos.length);
@@ -176,9 +323,13 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     }
   };
 
+  const hasPresetSet = presetSetName.trim().length > 0;
+  const canSendShelfSet =
+    shelfTitlePhotos.length > 0 || (hasPresetSet && shelfSpinePhotos.length > 0);
+
   const handleSend = async () => {
     const isShelf = captureMode === "shelf-set";
-    if (isShelf && !shelfTitlePhoto) return;
+    if (isShelf && !canSendShelfSet) return;
     if (!isShelf && photos.length === 0) return;
 
     setSending(true);
@@ -186,12 +337,12 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     const targetCabinetCode = selectedCabinet?.code || null;
     const targetShelf = selectedCabinet && useShelf ? shelfNumber : null;
 
-    const main = isShelf ? shelfTitlePhoto! : photos[0];
-    const extras = isShelf ? shelfSpinePhotos : photos.slice(1);
-    const totalPhotoCount = 1 + extras.length;
+    const ordered = isShelf ? [...shelfTitlePhotos, ...shelfSpinePhotos] : photos;
+    const totalPhotoCount = ordered.length;
+    const titleCount = isShelf ? shelfTitlePhotos.length : 1;
 
     try {
-      const batch = await compressBatchForRelay([main, ...extras], 750000);
+      const batch = await compressBatchForRelay(ordered, 750000, titleCount);
       const relayId = await onSendRelay({
         mainBase64: batch.mainBase64,
         extraBase64s: batch.extraBase64s,
@@ -201,6 +352,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
         setBatchId: !isShelf && stickySetEnabled ? stickyBatchId : null,
         isShelfSet: isShelf,
         presetSetName: (isShelf || stickySetEnabled) ? presetSetName.trim() : "",
+        titleImagesCount: isShelf ? shelfTitlePhotos.length : undefined,
         onPickedUp: (pickedId) => {
           setHistory((prev) => {
             const updated = prev.map((item) =>
@@ -222,12 +374,13 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
         setBatchId: !isShelf && stickySetEnabled ? stickyBatchId : null,
         isShelfSet: isShelf,
         presetSetName: presetSetName.trim() || undefined,
+        titleImagesCount: isShelf ? shelfTitlePhotos.length : undefined,
       };
       const nextHistory = [entry, ...history].slice(0, 20);
       setHistory(nextHistory);
       saveRelayHistory(nextHistory);
       if (isShelf) {
-        setShelfTitlePhoto(null);
+        setShelfTitlePhotos([]);
         setShelfSpinePhotos([]);
         setPresetSetName("");
       } else {
@@ -239,18 +392,92 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
       setFeedback({
         type: "ok",
         text: isShelf
-          ? "סט המדף (שער + שדרות) נשלח לענן! המחשב יפרוס את כל הכרכים והעותקים אוטומטית."
+          ? shelfTitlePhotos.length === 0
+            ? `המשך הסט "${presetSetName.trim()}" (${shelfSpinePhotos.length} שדרות) נשלח לענן! המחשב ישלים את שאר הכרכים.`
+            : `סט המדף (${shelfTitlePhotos.length} שער/פרטים + ${shelfSpinePhotos.length} שדרות) נשלח לענן! המחשב יפרוס את כל הכרכים והעותקים אוטומטית.`
           : "התמונות נשלחו לענן! תוכנת המחשב תקלוט אותן אוטומטית בתור הקטלוג.",
       });
     } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : "שליחת התמונות נכשלה";
-      const cleanMsg = rawMsg.includes("exceeds the maximum allowed size") || rawMsg.includes("1,048,576")
-        ? "משקל התמונות הכולל חרג ממגבלת הענן. בוצעה דחיסה מותאמת, אנא נסה לשלוח שוב."
-        : rawMsg;
+      const cleanMsg =
+        rawMsg.includes("exceeds the maximum allowed size") || rawMsg.includes("1,048,576")
+          ? "משקל התמונות הכולל חרג ממגבלת הענן. בוצעה דחיסה מותאמת, אנא נסה לשלוח שוב."
+          : rawMsg;
       setFeedback({ type: "err", text: cleanMsg });
     } finally {
       setSending(false);
     }
+  };
+
+  const renderExistingSetPicker = () => {
+    if (existingSets.length === 0) return null;
+    return (
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setShowExistingPicker((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--otzar-accent)]/60 bg-[var(--otzar-accent-soft)] px-2.5 py-1.5 text-xs font-bold text-[var(--otzar-accent)]"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>{showExistingPicker ? "סגור רשימת סטים" : `המשך סט קיים מהמאגר (${existingSets.length})`}</span>
+          </button>
+          {matchedExistingSet && (
+            <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+              סט קיים ({matchedExistingSet.count} כרכים)
+            </span>
+          )}
+        </div>
+
+        {showExistingPicker && (
+          <div className="space-y-2 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] p-2.5">
+            <div className="relative">
+              <input
+                type="text"
+                value={existingFilter}
+                onChange={(e) => setExistingFilter(e.target.value)}
+                placeholder="סנן לפי שם סט או מחבר..."
+                className="min-h-[38px] w-full rounded-lg border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-3 text-xs text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
+              />
+              {existingFilter && (
+                <button
+                  type="button"
+                  onClick={() => setExistingFilter("")}
+                  aria-label="נקה סינון"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--otzar-text-muted)]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="max-h-44 overflow-y-auto divide-y divide-[var(--otzar-border-muted)] rounded-lg border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]">
+              {filteredExistingSets.length === 0 ? (
+                <p className="p-2.5 text-center text-xs text-[var(--otzar-text-muted)]">לא נמצאו סטים תואמים</p>
+              ) : (
+                filteredExistingSets.map((s) => (
+                  <button
+                    key={s.setName}
+                    type="button"
+                    onClick={() => handleSelectExistingSet(s)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-right hover:bg-[var(--otzar-surface-alt)]"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold text-[var(--otzar-text)]">{s.setName}</p>
+                      <p className="truncate text-[11px] text-[var(--otzar-text-muted)]">
+                        {s.author ? `${s.author} · ` : ""}
+                        {s.count} כרכים
+                        {s.cabinetCode ? ` · ארון ${s.cabinetCode} מדף ${s.shelfNumber || 1}` : ""}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[11px] font-bold text-[var(--otzar-accent)]">בחר</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -321,7 +548,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
           }`}
         >
           <BookCopy className="h-4 w-4" />
-          <span>סט מהמדף (שער + שדרות)</span>
+          <span>סט מהמדף (שערים + שדרות)</span>
         </button>
       </div>
 
@@ -363,32 +590,58 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
           </div>
           {stickySetEnabled && (
             <div className="space-y-2 pt-1">
-              <input
-                type="text"
-                value={presetSetName}
-                onChange={(e) => setPresetSetName(e.target.value)}
-                placeholder="שם סט מקדים לכל הצילומים במקבץ (אופציונלי)"
-                className="min-h-[40px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  value={presetSetName}
+                  onChange={(e) => setPresetSetName(e.target.value)}
+                  placeholder="שם סט מקדים לכל הצילומים במקבץ (אופציונלי)"
+                  className="min-h-[40px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
+                />
+                {presetSetName && (
+                  <button
+                    type="button"
+                    onClick={() => setPresetSetName("")}
+                    aria-label="נקה שם סט"
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--otzar-text-muted)]"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              {renderExistingSetPicker()}
               <p className="text-[11px] text-[var(--otzar-text-muted)]">
-                נשלחו במקבץ זה: <strong>{stickyBatchCount}</strong> ספרים · ארון ומדף יישארו נעולים בין הצילומים.
+                נשלחו במקבץ זה: <strong>{stickyBatchCount}</strong> ספרים · ארון, מדף וסט נשמרים אוטומטית גם אם עוצרים באמצע.
               </p>
             </div>
           )}
         </div>
       ) : (
-        <div className="space-y-2 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-3 text-xs">
-          <p className="font-bold text-[var(--otzar-text)]">מצב סט מהמדף — 2 שלבים:</p>
+        <div className="space-y-2.5 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-3 text-xs">
+          <p className="font-bold text-[var(--otzar-text)]">מצב סט מהמדף — שערים ופרטים + שדרות:</p>
           <p className="text-[var(--otzar-text-muted)]">
-            1) צלם שער מייצג של אחד הכרכים, 2) צלם את שדרות הסט על המדף (1–3 תמונות).
+            1) צלם תמונת שער אחת או יותר (למשל שער ראשי + גב השער לשנה/הוצאה), 2) צלם את שדרות הסט (1–3 תמונות). בהמשך לסט קיים מהמאגר ניתן לצלם שדרות בלבד!
           </p>
-          <input
-            type="text"
-            value={presetSetName}
-            onChange={(e) => setPresetSetName(e.target.value)}
-            placeholder="שם הסט (אופציונלי — יזוהה מהשער)"
-            className="min-h-[40px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={presetSetName}
+              onChange={(e) => setPresetSetName(e.target.value)}
+              placeholder="שם הסט (אופציונלי — או בחר סט קיים להמשך)"
+              className="min-h-[40px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-sm text-[var(--otzar-text)] outline-none focus:border-[var(--otzar-accent)]"
+            />
+            {presetSetName && (
+              <button
+                type="button"
+                onClick={() => setPresetSetName("")}
+                aria-label="נקה שם סט"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--otzar-text-muted)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {renderExistingSetPicker()}
         </div>
       )}
 
@@ -396,49 +649,72 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
         {/* Capture & Queue */}
         {captureMode === "shelf-set" ? (
           <section className="space-y-3 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-3.5">
-            {/* Slot 1: Representative Title Page */}
+            {/* Slot 1: 0..3 Title/Detail Pages */}
             <div className="space-y-2 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[var(--otzar-text)]">1. תמונת שער מייצגת *</span>
-                {shelfTitlePhoto && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[var(--otzar-text)]">
+                  1. תמונות שער ופרטים ({shelfTitlePhotos.length}/3)
+                  {hasPresetSet ? " · אופציונלי" : " *"}
+                </span>
+                {shelfTitlePhotos.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setShelfTitlePhoto(null)}
+                    onClick={() => setShelfTitlePhotos([])}
                     className="text-xs font-semibold text-rose-600"
                   >
-                    הסר
+                    נקה הכל
                   </button>
                 )}
               </div>
-              {shelfTitlePhoto ? (
-                <div className="relative overflow-hidden rounded-xl border border-[var(--otzar-border-muted)] bg-slate-950">
-                  <img src={shelfTitlePhoto.previewUrl} alt="שער הסט" className="h-36 w-full object-contain" />
-                  <div className="bg-[var(--otzar-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--otzar-accent)] tabular-nums">
-                    שער מייצג · {Math.round(shelfTitlePhoto.byteSize / 1024)}KB
-                  </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={processingPhoto || shelfTitlePhotos.length >= 3}
+                  onClick={() => handleCaptureCamera("shelf-title")}
+                  className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-[var(--otzar-accent)] px-2 text-xs font-bold text-white disabled:opacity-45"
+                >
+                  <CameraIcon className="h-4 w-4" />
+                  <span>{shelfTitlePhotos.length === 0 ? "צלם שער" : "הוסף תמונת פרטים"}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={processingPhoto || shelfTitlePhotos.length >= 3}
+                  onClick={() => handlePickGallery("shelf-title")}
+                  className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-2 text-xs font-semibold text-[var(--otzar-text)] disabled:opacity-45"
+                >
+                  <ImagePlus className="h-4 w-4" />
+                  <span>מהגלריה</span>
+                </button>
+              </div>
+
+              {shelfTitlePhotos.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  {shelfTitlePhotos.map((tp, idx) => (
+                    <div
+                      key={idx}
+                      className="relative overflow-hidden rounded-xl border border-[var(--otzar-border-muted)] bg-slate-950"
+                    >
+                      <img src={tp.previewUrl} alt={`שער ${idx + 1}`} className="h-24 w-full object-contain" />
+                      <div className="bg-[var(--otzar-bg)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--otzar-accent)] tabular-nums truncate">
+                        {idx === 0 ? "שער ראשי" : `פרטים ${idx + 1}`} · {Math.round(tp.byteSize / 1024)}K
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShelfTitlePhotos((prev) => prev.filter((_, i) => i !== idx))}
+                        aria-label="הסר תמונת שער"
+                        className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-rose-600 text-white"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    disabled={processingPhoto}
-                    onClick={() => handleCaptureCamera("shelf-title")}
-                    className="flex min-h-[46px] items-center justify-center gap-1.5 rounded-xl bg-[var(--otzar-accent)] px-2 text-xs font-bold text-white"
-                  >
-                    <CameraIcon className="h-4 w-4" />
-                    <span>צלם שער</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={processingPhoto}
-                    onClick={() => handlePickGallery("shelf-title")}
-                    className="flex min-h-[46px] items-center justify-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-2 text-xs font-semibold text-[var(--otzar-text)]"
-                  >
-                    <ImagePlus className="h-4 w-4" />
-                    <span>מהגלריה</span>
-                  </button>
-                </div>
-              )}
+              ) : hasPresetSet ? (
+                <p className="rounded-xl bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                  ממשיך סט &quot;{presetSetName.trim()}&quot; — ניתן לצלם שדרות בלבד ללא שער מחדש!
+                </p>
+              ) : null}
             </div>
 
             {/* Slot 2: Spine shelf photos */}
@@ -634,7 +910,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
             disabled={
               !connected ||
               sending ||
-              (captureMode === "shelf-set" ? !shelfTitlePhoto : photos.length === 0)
+              (captureMode === "shelf-set" ? !canSendShelfSet : photos.length === 0)
             }
             onClick={handleSend}
             className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-[var(--otzar-accent)] px-4 font-bold text-white shadow-sm active:scale-[0.98] disabled:opacity-45"
@@ -646,9 +922,13 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
                 : !connected
                 ? "נדרש חיבור פעיל לענן"
                 : captureMode === "shelf-set"
-                ? !shelfTitlePhoto
-                  ? "צלם שער מייצג לסט לשליחה"
-                  : `שלח סט מהמדף (שער + ${shelfSpinePhotos.length} שדרות)`
+                ? !canSendShelfSet
+                  ? hasPresetSet
+                    ? "צלם תמונות שדרות להמשך הסט"
+                    : "צלם שער (או בחר סט קיים + שדרות)"
+                  : shelfTitlePhotos.length === 0
+                  ? `שלח המשך סט (${shelfSpinePhotos.length} שדרות)`
+                  : `שלח סט מהמדף (${shelfTitlePhotos.length} שער/פרטים + ${shelfSpinePhotos.length} שדרות)`
                 : photos.length === 0
                 ? "צלם או בחר תמונה לשליחה"
                 : `שלח ${photos.length} תמונות לקטלוג AI במחשב`}
@@ -675,6 +955,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
                   <li key={item.relayId} className="flex items-center justify-between px-3 py-2">
                     <span className="text-[var(--otzar-text)] tabular-nums">
                       {new Date(item.createdAt).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+                      {item.presetSetName ? ` · ${item.presetSetName}` : ""}
                       {item.cabinetCode ? ` · ארון ${item.cabinetCode}` : ""}
                       {item.shelfNumber ? ` מדף ${item.shelfNumber}` : ""}
                       {` · ${item.photoCount} תמונות`}

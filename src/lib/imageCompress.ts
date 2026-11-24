@@ -59,7 +59,8 @@ export async function compressImageDataUrl(
 
 export async function compressBatchForRelay(
   captures: CompressedCapture[],
-  maxTotalB64Chars = 750000
+  maxTotalB64Chars = 750000,
+  titleCount = 1
 ): Promise<{ mainBase64: string; extraBase64s: string[] }> {
   if (captures.length === 0) {
     throw new Error("אין תמונות לשליחה");
@@ -74,12 +75,28 @@ export async function compressBatchForRelay(
   }
 
   const count = captures.length;
-  const mainBudget = count === 1 ? maxTotalB64Chars : Math.round(maxTotalB64Chars * 0.34);
-  const extraBudgetPerItem = count > 1 ? Math.floor((maxTotalB64Chars - mainBudget) / (count - 1)) : 0;
+  const safeTitleCount = Math.max(0, Math.min(count, Math.round(titleCount)));
+  const spineCount = count - safeTitleCount;
+
+  const getBudgetForIndex = (i: number): number => {
+    if (count === 1) return maxTotalB64Chars;
+    if (safeTitleCount === 0 || spineCount === 0) {
+      return Math.floor(maxTotalB64Chars / count);
+    }
+    if (safeTitleCount === 1) {
+      const mainBudget = Math.round(maxTotalB64Chars * 0.34);
+      return i === 0 ? mainBudget : Math.floor((maxTotalB64Chars - mainBudget) / spineCount);
+    }
+    const titlePool = Math.round(maxTotalB64Chars * 0.55);
+    const spinePool = maxTotalB64Chars - titlePool;
+    return i < safeTitleCount
+      ? Math.floor(titlePool / safeTitleCount)
+      : Math.floor(spinePool / spineCount);
+  };
 
   const outBase64s: string[] = [];
   for (let i = 0; i < captures.length; i++) {
-    const targetBudget = i === 0 ? mainBudget : extraBudgetPerItem;
+    const targetBudget = getBudgetForIndex(i);
     const item = captures[i];
     if (item.base64.length <= targetBudget) {
       outBase64s.push(item.base64);

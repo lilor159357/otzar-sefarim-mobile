@@ -299,7 +299,14 @@ public class AppUpdaterPlugin extends Plugin {
                     return;
                 }
 
-                long totalBytes = conn.getContentLengthLong();
+                long totalBytes = -1;
+                try {
+                    String clHeader = conn.getHeaderField("Content-Length");
+                    if (clHeader != null && !clHeader.trim().isEmpty()) {
+                        totalBytes = Long.parseLong(clHeader.trim());
+                    }
+                } catch (Exception ignored) {
+                }
                 long downloaded = 0;
                 int lastReportedPct = -1;
                 long lastReportMs = 0;

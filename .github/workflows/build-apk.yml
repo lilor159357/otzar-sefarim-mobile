@@ -74,7 +74,12 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/gradle.log || {
+            ERR=$(grep -iE "error:|Execution failed|What went wrong|> " /tmp/gradle.log | tail -n 25 | tr '\n' ' ' | cut -c1-900)
+            echo "::error title=Gradle Build Failure::$ERR"
+            exit 1
+          }
 
       - name: Package named APK
         run: |

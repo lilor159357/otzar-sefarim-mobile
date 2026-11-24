@@ -42,6 +42,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Promote UI strings from Firestore (if secret configured)
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/promote-ui-strings.mjs --platform mobile
+
+      - name: Check strings parity
+        run: node scripts/check-strings-parity.mjs
+
       - name: Build web bundle & typecheck
         run: npm run build
 

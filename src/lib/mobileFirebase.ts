@@ -16,6 +16,7 @@ import {
   type Firestore,
   type Unsubscribe,
 } from "firebase/firestore";
+import type { StringOverrideRecord } from "../../shared/strings/engine.ts";
 import type {
   BookDoc,
   BorrowerDoc,
@@ -173,9 +174,14 @@ export class MobileOtzarClient {
     projectId: null,
   };
   private onChange: () => void;
+  private onStringsChange?: (records: Record<string, StringOverrideRecord>) => void;
 
   constructor(onChange: () => void) {
     this.onChange = onChange;
+  }
+
+  public setOnStringsChange(cb?: (records: Record<string, StringOverrideRecord>) => void): void {
+    this.onStringsChange = cb;
   }
 
   public getSnapshot(): SyncSnapshot {
@@ -249,6 +255,7 @@ export class MobileOtzarClient {
       this.snapshot.connecting = false;
       this.snapshot.offline = false;
       this.onChange();
+      void this.pullUiStrings().catch(() => {});
 
       await this.pullAllDeltas();
       this.startListeners();
@@ -424,6 +431,55 @@ export class MobileOtzarClient {
       });
       this.unsubscribers.push(unsub);
     }
+
+    // Non-blocking listener for live UI string overrides
+    let firstStrings = true;
+    const unsubStrings = onSnapshot(
+      query(collection(fsClient, "ui_strings"), limit(500)),
+      (snap) => {
+        if (firstStrings) {
+          firstStrings = false;
+          return;
+        }
+        const map: Record<string, StringOverrideRecord> = {};
+        for (const d of snap.docs) {
+          const data = d.data();
+          if (typeof data.value === "string") {
+            map[d.id] = {
+              value: data.value,
+              defaultValueSnapshot: typeof data.defaultValueSnapshot === "string" ? data.defaultValueSnapshot : undefined,
+              updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : undefined,
+              promoted_desktop: Boolean(data.promoted_desktop),
+              promoted_mobile: Boolean(data.promoted_mobile),
+            };
+          }
+        }
+        this.onStringsChange?.(map);
+      },
+      () => {
+        // Non-fatal: cached strings remain active offline
+      }
+    );
+    this.unsubscribers.push(unsubStrings);
+  }
+
+  public async pullUiStrings(): Promise<void> {
+    if (!this.firestore) return;
+    const snap = await getDocs(query(collection(this.firestore, "ui_strings"), limit(500)));
+    const map: Record<string, StringOverrideRecord> = {};
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (typeof data.value === "string") {
+        map[d.id] = {
+          value: data.value,
+          defaultValueSnapshot: typeof data.defaultValueSnapshot === "string" ? data.defaultValueSnapshot : undefined,
+          updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : undefined,
+          promoted_desktop: Boolean(data.promoted_desktop),
+          promoted_mobile: Boolean(data.promoted_mobile),
+        };
+      }
+    }
+    this.onStringsChange?.(map);
   }
 
   public async sendRelayPhotos(params: {

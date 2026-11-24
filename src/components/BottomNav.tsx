@@ -1,4 +1,5 @@
 import React from "react";
+import { useStrings } from "../lib/stringsContext.tsx";
 import { Search, ArrowLeftRight, Camera, Settings2 } from "lucide-react";
 import type { TabKey } from "../types.ts";
 
@@ -15,18 +16,19 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   overdueCount,
   hasConfig,
 }) => {
+  const { t } = useStrings();
   const items: Array<{ key: TabKey; label: string; icon: React.ReactNode; badge?: number }> = [
-    { key: "search", label: "חיפוש ומפה", icon: <Search className="h-5 w-5" /> },
+    { key: "search", label: t("nav.mobileSearchTab"), icon: <Search className="h-5 w-5" /> },
     {
       key: "circulation",
-      label: "השאלה",
+      label: t("mobile.navCirculationShort"),
       icon: <ArrowLeftRight className="h-5 w-5" />,
       badge: overdueCount > 0 ? overdueCount : undefined,
     },
-    { key: "relay", label: "צילום AI", icon: <Camera className="h-5 w-5" /> },
+    { key: "relay", label: t("mobile.navAiCameraShort"), icon: <Camera className="h-5 w-5" /> },
     {
       key: "settings",
-      label: "חיבור",
+      label: t("mobile.navConnectionShort"),
       icon: <Settings2 className="h-5 w-5" />,
       badge: !hasConfig ? 1 : undefined,
     },
@@ -34,7 +36,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   return (
     <nav
-      aria-label="ניווט ראשי"
+      aria-label={t("mobile.navMainAria")}
       className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]/95 backdrop-blur-md pb-safe"
     >
       <div className="mx-auto grid h-16 max-w-5xl grid-cols-4 px-1">

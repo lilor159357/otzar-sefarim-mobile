@@ -26,6 +26,7 @@ import {
   parseMobileQrPairingCode,
 } from "../lib/setupDecrypt.ts";
 import { BarcodeScannerModal } from "./BarcodeScannerModal.tsx";
+import { useStrings } from "../lib/stringsContext.tsx";
 import {
   formatBytesHe,
   isNativeAndroid,
@@ -85,6 +86,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
   onClearCacheAndDisconnect,
   onChangeTheme,
 }) => {
+  const { t } = useStrings();
   const [bundleText, setBundleText] = useState("");
   const [passcode, setPasscode] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
@@ -229,7 +231,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
         <section className="space-y-3 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-4">
           <div className="flex items-center gap-2">
             <FileKey2 className="h-5 w-5 text-[var(--otzar-accent)]" />
-            <h2 className="text-base font-bold text-[var(--otzar-text)]">חיבור מהיר מהמחשב (בלחיצה אחת)</h2>
+            <h2 className="text-base font-bold text-[var(--otzar-text)]">{t("mobile.quickConnectTitle")}</h2>
           </div>
           <p className="text-xs leading-relaxed text-[var(--otzar-text-muted)]">
             בתוכנת המחשב היכנס ל<b>הגדרות ומפה ← סנכרון ענן</b> (או <b>העברה למכשיר אחר</b>), לחץ על <b>&quot;הצג ברקוד לחיבור מהיר&quot;</b> וסרוק מהטלפון — או טען קובץ <code>.otzar-setup</code>.
@@ -344,7 +346,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
         {/* Status, Theme & Cache Controls */}
         <div className="space-y-4">
           <section className="space-y-3 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-4">
-            <h2 className="text-base font-bold text-[var(--otzar-text)]">מצב סנכרון ומאגר מקומי</h2>
+            <h2 className="text-base font-bold text-[var(--otzar-text)]">{t("mobile.syncAndLocalDb")}</h2>
 
             <div className="grid grid-cols-2 gap-2.5 rounded-xl bg-[var(--otzar-surface-alt)] p-3 text-xs tabular-nums">
               <div>
@@ -385,7 +387,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                 className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-[var(--otzar-accent)] px-3 text-sm font-bold text-white active:scale-95 disabled:opacity-45"
               >
                 <RefreshCw className={`h-4 w-4 ${sync.connecting ? "animate-spin" : ""}`} />
-                <span>סנכרן עכשיו</span>
+                <span>{t("sync.syncNow")}</span>
               </button>
 
               <button
@@ -394,7 +396,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                 onClick={onFullResync}
                 className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-sm font-semibold text-[var(--otzar-text)] active:scale-95 disabled:opacity-45"
               >
-                <span>משיכה מלאה מחדש</span>
+                <span>{t("mobile.fullResync")}</span>
               </button>
             </div>
 
@@ -407,7 +409,7 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                     className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-xl border border-rose-300/70 text-xs font-semibold text-rose-600 dark:border-rose-800 dark:text-rose-400"
                   >
                     <Trash2 className="h-4 w-4" />
-                    <span>התנתק מהענן ומחק מטמון מהטלפון</span>
+                    <span>{t("mobile.disconnectAndClearCache")}</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 p-2 dark:border-rose-800 dark:bg-rose-950/30">

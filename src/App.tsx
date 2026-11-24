@@ -27,6 +27,7 @@ import { SearchAndMapTab } from "./components/SearchAndMapTab.tsx";
 import { CirculationTab } from "./components/CirculationTab.tsx";
 import { AiRelayTab } from "./components/AiRelayTab.tsx";
 import { ConnectionTab } from "./components/ConnectionTab.tsx";
+import { useStrings } from "./lib/stringsContext.tsx";
 
 const THEME_STORAGE_KEY = "otzar_mobile_theme_v1";
 
@@ -81,6 +82,11 @@ export function App() {
     clientRef.current = new MobileOtzarClient(() => setTick((t) => t + 1));
   }
   const client = clientRef.current;
+  const { applyRemoteOverrides } = useStrings();
+
+  useEffect(() => {
+    client.setOnStringsChange(applyRemoteOverrides);
+  }, [client, applyRemoteOverrides]);
 
   useEffect(() => {
     const html = document.documentElement;

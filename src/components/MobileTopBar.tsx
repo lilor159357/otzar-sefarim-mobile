@@ -1,4 +1,5 @@
 import React from "react";
+import { useStrings } from "../lib/stringsContext.tsx";
 import { RefreshCw, Wifi, WifiOff, Cloud } from "lucide-react";
 import type { SyncSnapshot } from "../types.ts";
 
@@ -19,15 +20,16 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
   onSyncNow,
   onOpenSettings,
 }) => {
+  const { t } = useStrings();
   const statusLabel = !hasConfig
-    ? "ממתין לחיבור"
+    ? t("mobile.statusAwaitingSetup")
     : sync.connecting
-    ? "מתחבר ומסנכרן..."
+    ? t("mobile.statusConnecting")
     : sync.connected
-    ? `מחובר · ${booksCount.toLocaleString("he-IL")} ספרים`
+    ? t("mobile.statusConnectedCount", { count: booksCount })
     : sync.offline
-    ? "מצב לא מקוון"
-    : "מטמון מקומי";
+    ? t("mobile.statusOffline")
+    : t("mobile.statusLocalCache");
 
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]/95 backdrop-blur-md pt-safe">
@@ -38,7 +40,7 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-base font-bold leading-tight text-[var(--otzar-text)]">
-              {libraryName || "אוצר ספרים"}
+              {libraryName || t("common.appName")}
             </h1>
             <button
               type="button"
@@ -64,7 +66,7 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
             <button
               type="button"
               onClick={onOpenSettings}
-              aria-label="פרטי חיבור"
+              aria-label={t("mobile.ariaConnectionInfo")}
               className="flex h-11 w-11 items-center justify-center rounded-xl text-[var(--otzar-text-muted)] active:bg-[var(--otzar-surface-alt)]"
             >
               {sync.offline ? <WifiOff className="h-5 w-5" /> : <Wifi className="h-5 w-5" />}
@@ -74,7 +76,7 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
             type="button"
             onClick={onSyncNow}
             disabled={!hasConfig || sync.connecting}
-            aria-label="רענן סנכרון"
+            aria-label={t("mobile.ariaRefreshSync")}
             className="flex h-11 w-11 items-center justify-center rounded-xl text-[var(--otzar-text)] hover:bg-[var(--otzar-surface-alt)] active:scale-95 disabled:opacity-40"
           >
             <RefreshCw className={`h-5 w-5 ${sync.connecting ? "animate-spin text-[var(--otzar-accent)]" : ""}`} />

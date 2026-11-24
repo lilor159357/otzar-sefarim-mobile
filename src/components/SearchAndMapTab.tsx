@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin, Layers, ChevronDown, ChevronUp } from "lucide-react";
 import type { BookDoc, BorrowerDoc, CabinetDoc, LibraryMetaDoc, LoanDoc } from "../types.ts";
 import { searchMobileBooks, groupMobileSetVolumes } from "../lib/torahSearch.ts";
+import { useStrings } from "../lib/stringsContext.tsx";
 import { LibraryMap2D } from "./LibraryMap2D.tsx";
 import { BarcodeScannerModal } from "./BarcodeScannerModal.tsx";
 
@@ -46,6 +47,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
   meta,
   onJumpToCirculation,
 }) => {
+  const { t } = useStrings();
   const [queryText, setQueryText] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedCabinetId, setSelectedCabinetId] = useState<string | null>(null);
@@ -127,14 +129,14 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
             type="search"
             value={queryText}
             onChange={(e) => setQueryText(e.target.value)}
-            placeholder="חפש ספר, מחבר, נושא, או ברקוד..."
+            placeholder={t("mobile.searchPlaceholder")}
             className="min-h-[46px] w-full rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] pl-10 pr-10 text-base text-[var(--otzar-text)] outline-none transition-colors focus:border-[var(--otzar-accent)] focus:bg-[var(--otzar-bg)]"
           />
           {queryText && (
             <button
               type="button"
               onClick={() => setQueryText("")}
-              aria-label="נקה חיפוש"
+              aria-label={t("mobile.clearSearchAria")}
               className="absolute left-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl text-[var(--otzar-text-muted)]"
             >
               <X className="h-4 w-4" />
@@ -145,7 +147,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
         <button
           type="button"
           onClick={() => setScannerOpen(true)}
-          aria-label="סרוק ברקוד ספר"
+          aria-label={t("mobile.scanBarcodeForBook")}
           className="flex h-[46px] min-w-[46px] items-center justify-center rounded-2xl bg-[var(--otzar-accent)] px-3 text-white shadow-sm active:scale-95"
         >
           <ScanLine className="h-5 w-5" />
@@ -154,7 +156,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
         <button
           type="button"
           onClick={() => setShowMap((v) => !v)}
-          aria-label="הצג מפת ספרייה"
+          aria-label={t("mobile.showLibraryMap")}
           className={`flex h-[46px] min-w-[46px] items-center justify-center gap-1.5 rounded-2xl border px-3 text-sm font-semibold transition-colors active:scale-95 ${
             showMap
               ? "border-[var(--otzar-accent)] bg-[var(--otzar-accent-soft)] text-[var(--otzar-accent)]"
@@ -170,10 +172,10 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
       <div className="grid grid-cols-4 gap-1 rounded-xl bg-[var(--otzar-surface-alt)] p-1">
         {(
           [
-            { key: "all", label: "הכל" },
-            { key: "available", label: "זמינים" },
-            { key: "loaned", label: "מושאלים" },
-            { key: "reference", label: "לעיון" },
+            { key: "all", label: t("search.filterAll") },
+            { key: "available", label: t("mobile.filterAvailable") },
+            { key: "loaned", label: t("mobile.filterLoaned") },
+            { key: "reference", label: t("mobile.filterReference") },
           ] as Array<{ key: StatusFilter; label: string }>
         ).map((tab) => {
           const active = statusFilter === tab.key;

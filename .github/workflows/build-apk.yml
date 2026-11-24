@@ -55,19 +55,21 @@ jobs:
           node scripts/prepare-android.mjs
           npx cap sync android
 
-      - name: Cache Android debug keystore for consistent in-app updates
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: otzar-android-debug-keystore-${{ github.repository_id }}-v1
-
-      - name: Restore custom debug keystore from secret (if provided)
+      - name: Restore permanent Android signing keystore from secret
         env:
           ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
-          if [ -n "$ANDROID_DEBUG_KEYSTORE_B64" ]; then
+          if [ -z "$ANDROID_DEBUG_KEYSTORE_B64" ]; then
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              echo "::error title=Missing Keystore Secret::ANDROID_DEBUG_KEYSTORE_B64 is not set! Refusing to sign release APK with an ephemeral keystore."
+              exit 1
+            fi
+            echo "Warning: ANDROID_DEBUG_KEYSTORE_B64 secret missing on branch build; Gradle will generate a temporary debug keystore."
+          else
             mkdir -p ~/.android
-            echo "$ANDROID_DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            printf "%s" "$ANDROID_DEBUG_KEYSTORE_B64" | tr -d "\r\n " | base64 -d > ~/.android/debug.keystore
+            keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey >/dev/null
+            echo "Verified permanent Android signing keystore."
           fi
 
       - name: Build Android APK

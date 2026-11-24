@@ -33,8 +33,12 @@ export interface DownloadProgressInfo {
 }
 
 export type InstallOutcome =
-  | { status: "installer_launched"; bytes?: number }
+  | { status: "installer_launched"; bytes?: number; savedToDownloads?: boolean; downloadPath?: string; fileName?: string }
   | { status: "permission_required" }
+  | { status: "opened_browser" };
+
+export type SaveApkOutcome =
+  | { status: "saved_to_downloads"; bytes?: number; fileName?: string; downloadPath?: string }
   | { status: "opened_browser" };
 
 interface AppUpdaterPlugin {
@@ -42,7 +46,20 @@ interface AppUpdaterPlugin {
   checkLatestRelease(options: { url: string }): Promise<{ statusCode: number; body: string }>;
   canRequestPackageInstalls(): Promise<{ granted: boolean }>;
   openInstallPermissionSettings(): Promise<void>;
-  downloadAndInstallApk(options: { url: string }): Promise<{ status: "installer_launched" | "permission_required"; bytes?: number }>;
+  downloadAndInstallApk(options: { url: string; fileName?: string }): Promise<{
+    status: "installer_launched" | "permission_required";
+    bytes?: number;
+    savedToDownloads?: boolean;
+    downloadPath?: string;
+    fileName?: string;
+  }>;
+  downloadApkToDownloads(options: { url: string; fileName?: string }): Promise<{
+    status: "saved_to_downloads";
+    bytes?: number;
+    fileName?: string;
+    downloadPath?: string;
+  }>;
+  shareApk(options: { url?: string; fileName?: string }): Promise<{ status: "share_opened"; fileName?: string; bytes?: number }>;
   addListener(
     eventName: "downloadProgress",
     listenerFunc: (data: DownloadProgressInfo) => void
@@ -216,17 +233,16 @@ export async function openInstallPermissionSettings(): Promise<void> {
 
 export async function downloadAndInstallUpdate(
   apkUrl: string,
-  onProgress?: (info: DownloadProgressInfo) => void
+  onProgress?: (info: DownloadProgressInfo) => void,
+  fileName?: string | null
 ): Promise<InstallOutcome> {
   if (!apkUrl) {
     throw new Error("קישור ההורדה של קובץ ה-APK חסר.");
   }
-
   if (!isNativeAndroid()) {
     window.open(apkUrl, "_blank", "noopener,noreferrer");
     return { status: "opened_browser" };
   }
-
   let handle: PluginListenerHandle | null = null;
   if (onProgress) {
     try {
@@ -237,13 +253,21 @@ export async function downloadAndInstallUpdate(
       handle = null;
     }
   }
-
   try {
-    const result = await AppUpdater.downloadAndInstallApk({ url: apkUrl });
+    const result = await AppUpdater.downloadAndInstallApk({
+      url: apkUrl,
+      fileName: fileName || undefined,
+    });
     if (result?.status === "permission_required") {
       return { status: "permission_required" };
     }
-    return { status: "installer_launched", bytes: result?.bytes };
+    return {
+      status: "installer_launched",
+      bytes: result?.bytes,
+      savedToDownloads: result?.savedToDownloads,
+      downloadPath: result?.downloadPath,
+      fileName: result?.fileName,
+    };
   } finally {
     if (handle) {
       try {
@@ -251,6 +275,62 @@ export async function downloadAndInstallUpdate(
       } catch {}
     }
   }
+}
+
+export async function saveApkToDownloads(
+  apkUrl: string,
+  onProgress?: (info: DownloadProgressInfo) => void,
+  fileName?: string | null
+): Promise<SaveApkOutcome> {
+  if (!apkUrl) {
+    throw new Error("קישור ההורדה של קובץ ה-APK חסר.");
+  }
+  if (!isNativeAndroid()) {
+    window.open(apkUrl, "_blank", "noopener,noreferrer");
+    return { status: "opened_browser" };
+  }
+  let handle: PluginListenerHandle | null = null;
+  if (onProgress) {
+    try {
+      handle = await AppUpdater.addListener("downloadProgress", (data) => {
+        onProgress(data);
+      });
+    } catch {
+      handle = null;
+    }
+  }
+  try {
+    const result = await AppUpdater.downloadApkToDownloads({
+      url: apkUrl,
+      fileName: fileName || undefined,
+    });
+    return {
+      status: "saved_to_downloads",
+      bytes: result?.bytes,
+      fileName: result?.fileName,
+      downloadPath: result?.downloadPath,
+    };
+  } finally {
+    if (handle) {
+      try {
+        await handle.remove();
+      } catch {}
+    }
+  }
+}
+
+export async function shareDownloadedApk(
+  apkUrl?: string | null,
+  fileName?: string | null
+): Promise<void> {
+  if (!isNativeAndroid()) {
+    if (apkUrl) window.open(apkUrl, "_blank", "noopener,noreferrer");
+    return;
+  }
+  await AppUpdater.shareApk({
+    url: apkUrl || undefined,
+    fileName: fileName || undefined,
+  });
 }
 
 export function formatBytesHe(bytes: number | null | undefined): string {

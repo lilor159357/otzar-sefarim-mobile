@@ -14,7 +14,9 @@ import {
   getInstalledVersion,
   isNativeAndroid,
   loadUpdatePrefs,
+  saveApkToDownloads,
   saveUpdatePrefs,
+  shareDownloadedApk,
   type DownloadProgressInfo,
   type UpdateCheckResult,
   type UpdatePreferences,
@@ -109,21 +111,28 @@ export function App() {
     saveUpdatePrefs(next);
   }, []);
 
-  const installUpdateUrl = useCallback(async (apkUrl: string) => {
+  const installUpdateUrl = useCallback(async (apkUrl: string, fileName?: string | null) => {
     setUpdateDownloading(true);
     setUpdateProgress({ progress: 0, downloadedBytes: 0, totalBytes: 0 });
     setUpdateError(null);
     setUpdateStatusMsg(null);
     try {
-      const outcome = await downloadAndInstallUpdate(apkUrl, (prog) => {
-        setUpdateProgress(prog);
-      });
+      const outcome = await downloadAndInstallUpdate(
+        apkUrl,
+        (prog) => {
+          setUpdateProgress(prog);
+        },
+        fileName
+      );
       if (outcome.status === "permission_required") {
         setUpdateStatusMsg(
-          "נדרש אישור חד-פעמי להתקנת עדכונים בהגדרות הטלפון ('אפשר ממקור זה'). לאחר האישור לחץ שוב על 'הורד והתקן עדכון'."
+          "נדרש אישור חד-פעמי להתקנת עדכונים בהגדרות הטלפון ('אפשר ממקור זה'). לחילופין ניתן ללחוץ 'שמור לתיקיית הורדות'."
         );
       } else if (outcome.status === "installer_launched") {
-        setUpdateStatusMsg("מסך עדכון האפליקציה נפתח. אשר התקנה כדי לעדכן לגרסה החדשה.");
+        const dlNote = outcome.savedToDownloads
+          ? ` בנוסף נשמר עותק בתיקיית ההורדות (${outcome.fileName || "APK"}).`
+          : "";
+        setUpdateStatusMsg("מסך עדכון האפליקציה נפתח. אשר התקנה כדי לעדכן לגרסה החדשה." + dlNote);
       } else {
         setUpdateStatusMsg("קובץ ההתקנה (APK) נפתח להורדה בדפדפן.");
       }
@@ -164,7 +173,7 @@ export function App() {
           if (silent && latestPrefs.autoDownloadAndPrompt && res.apkUrl && isNativeAndroid()) {
             const canDirect = await canInstallApkDirectly();
             if (canDirect) {
-              void installUpdateUrl(res.apkUrl);
+              void installUpdateUrl(res.apkUrl, res.apkName || `Otzar-Sefarim-Mobile-${res.latestVersion}.apk`);
             }
           }
         }
@@ -184,8 +193,58 @@ export function App() {
       setUpdateError("לא נמצא קובץ APK מצורף לשחרור זה.");
       return;
     }
-    await installUpdateUrl(updateInfo.apkUrl);
+    const fileName = updateInfo.apkName || `Otzar-Sefarim-Mobile-${updateInfo.latestVersion}.apk`;
+    await installUpdateUrl(updateInfo.apkUrl, fileName);
   }, [installUpdateUrl, updateInfo]);
+
+  const handleSaveApkToDownloads = useCallback(async () => {
+    if (!updateInfo?.apkUrl) {
+      setUpdateError("לא נמצא קובץ APK מצורף לשחרור זה.");
+      return;
+    }
+    const fileName = updateInfo.apkName || `Otzar-Sefarim-Mobile-${updateInfo.latestVersion}.apk`;
+    setUpdateDownloading(true);
+    setUpdateProgress({ progress: 0, downloadedBytes: 0, totalBytes: 0 });
+    setUpdateError(null);
+    setUpdateStatusMsg(null);
+    try {
+      const res = await saveApkToDownloads(
+        updateInfo.apkUrl,
+        (prog) => {
+          setUpdateProgress(prog);
+        },
+        fileName
+      );
+      if (res.status === "saved_to_downloads") {
+        setUpdateStatusMsg(
+          `קובץ ההתקנה נשמר בתיקיית ההורדות: ${res.fileName || fileName}. כעת אפשר גם להסיר גרסה ישנה ולהתקין ישירות ממנהל הקבצים.`
+        );
+      } else {
+        setUpdateStatusMsg("קובץ ההתקנה נפתח להורדה בדפדפן.");
+      }
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "שמירת הקובץ להורדות נכשלה.");
+    } finally {
+      setUpdateDownloading(false);
+    }
+  }, [updateInfo]);
+
+  const handleShareApk = useCallback(async () => {
+    if (!updateInfo?.apkUrl) {
+      setUpdateError("לא נמצא קובץ APK מצורף לשחרור זה.");
+      return;
+    }
+    const fileName = updateInfo.apkName || `Otzar-Sefarim-Mobile-${updateInfo.latestVersion}.apk`;
+    setUpdateDownloading(true);
+    setUpdateError(null);
+    try {
+      await shareDownloadedApk(updateInfo.apkUrl, fileName);
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "שיתוף קובץ ה-APK נכשל.");
+    } finally {
+      setUpdateDownloading(false);
+    }
+  }, [updateInfo]);
 
   useEffect(() => {
     void getInstalledVersion().then(setInstalledVersion);
@@ -380,6 +439,8 @@ export function App() {
             onUpdatePrefsChange={handleUpdatePrefsChange}
             onCheckForUpdates={() => handleCheckForUpdates(false)}
             onInstallUpdate={handleInstallUpdate}
+            onSaveApkToDownloads={handleSaveApkToDownloads}
+            onShareApk={handleShareApk}
             onConnectConfig={handleConnectConfig}
             onSyncNow={handleSyncNow}
             onFullResync={handleFullResync}

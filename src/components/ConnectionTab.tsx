@@ -13,6 +13,8 @@ import {
   Palette,
   Download,
   ExternalLink,
+  FolderDown,
+  Share2,
   ShieldCheck,
   QrCode,
 } from "lucide-react";
@@ -49,6 +51,8 @@ interface ConnectionTabProps {
   onUpdatePrefsChange: (next: UpdatePreferences) => void;
   onCheckForUpdates: () => Promise<void>;
   onInstallUpdate: () => Promise<void>;
+  onSaveApkToDownloads: () => Promise<void>;
+  onShareApk: () => Promise<void>;
   onConnectConfig: (cfg: MobileConnectionConfig) => Promise<void>;
   onSyncNow: () => Promise<void>;
   onFullResync: () => Promise<void>;
@@ -73,6 +77,8 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
   onUpdatePrefsChange,
   onCheckForUpdates,
   onInstallUpdate,
+  onSaveApkToDownloads,
+  onShareApk,
   onConnectConfig,
   onSyncNow,
   onFullResync,
@@ -616,7 +622,32 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                       </span>
                     </button>
                   )}
-
+                  {updateInfo.apkUrl && isNativeAndroid() && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={updateDownloading}
+                        onClick={() => {
+                          void onSaveApkToDownloads();
+                        }}
+                        className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-3 text-xs font-semibold text-[var(--otzar-text)] active:scale-95 disabled:opacity-50"
+                      >
+                        <FolderDown className="h-3.5 w-3.5 text-[var(--otzar-accent)]" />
+                        <span>שמור להורדות</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={updateDownloading}
+                        onClick={() => {
+                          void onShareApk();
+                        }}
+                        className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-3 text-xs font-semibold text-[var(--otzar-text)] active:scale-95 disabled:opacity-50"
+                      >
+                        <Share2 className="h-3.5 w-3.5" />
+                        <span>שתף APK</span>
+                      </button>
+                    </>
+                  )}
                   <a
                     href={updateInfo.apkUrl || updateInfo.releasePageUrl}
                     target="_blank"
@@ -627,7 +658,6 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                     <span>פתח בדפדפן</span>
                   </a>
                 </div>
-
                 {isNativeAndroid() && (
                   <p className="flex items-start gap-1.5 text-[11px] text-[var(--otzar-text-muted)]">
                     <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--otzar-accent)]" />

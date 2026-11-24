@@ -45,6 +45,25 @@ jobs:
       - name: Build web bundle & typecheck
         run: npm run build
 
+      - name: Restore & verify permanent Android signing keystore
+        env:
+          OTZAR_KEYSTORE_B64: ${{ secrets.OTZAR_KEYSTORE_B64 }}
+          OTZAR_KEYSTORE_PASSWORD: ${{ secrets.OTZAR_KEYSTORE_PASSWORD }}
+          OTZAR_KEY_ALIAS: ${{ secrets.OTZAR_KEY_ALIAS }}
+        run: |
+          if [ -z "$OTZAR_KEYSTORE_B64" ] || [ -z "$OTZAR_KEYSTORE_PASSWORD" ]; then
+            echo "::error title=Missing Signing Keystore::OTZAR_KEYSTORE_B64 or OTZAR_KEYSTORE_PASSWORD is not configured in repository secrets!"
+            exit 1
+          fi
+          KS_PATH="$RUNNER_TEMP/otzar-signing.p12"
+          printf "%s" "$OTZAR_KEYSTORE_B64" | tr -d "\r\n " | base64 -d > "$KS_PATH"
+          ALIAS="${OTZAR_KEY_ALIAS:-otzar}"
+          keytool -list -keystore "$KS_PATH" -storetype PKCS12 -storepass "$OTZAR_KEYSTORE_PASSWORD" -alias "$ALIAS" >/dev/null
+          echo "OTZAR_KEYSTORE_PATH=$KS_PATH" >> "$GITHUB_ENV"
+          echo "OTZAR_KEYSTORE_PASSWORD=$OTZAR_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "OTZAR_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
+          echo "Verified permanent PKCS12 signing keystore (alias=$ALIAS)."
+
       - name: Initialize Capacitor Android project
         env:
           CAPACITOR_TELEMETRY: "false"
@@ -55,39 +74,44 @@ jobs:
           node scripts/prepare-android.mjs
           npx cap sync android
 
-      - name: Restore permanent Android signing keystore from secret
-        env:
-          ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
-        run: |
-          if [ -z "$ANDROID_DEBUG_KEYSTORE_B64" ]; then
-            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-              echo "::error title=Missing Keystore Secret::ANDROID_DEBUG_KEYSTORE_B64 is not set! Refusing to sign release APK with an ephemeral keystore."
-              exit 1
-            fi
-            echo "Warning: ANDROID_DEBUG_KEYSTORE_B64 secret missing on branch build; Gradle will generate a temporary debug keystore."
-          else
-            mkdir -p ~/.android
-            printf "%s" "$ANDROID_DEBUG_KEYSTORE_B64" | tr -d "\r\n " | base64 -d > ~/.android/debug.keystore
-            keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey >/dev/null
-            echo "Verified permanent Android signing keystore."
-          fi
-
-      - name: Build Android APK
+      - name: Build signed Release Android APK
         working-directory: android
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/gradle.log || {
+          ./gradlew assembleRelease --no-daemon 2>&1 | tee /tmp/gradle.log || {
             ERR=$(grep -A 3 -iE "\.java:[0-9]+: error:|error:|Execution failed|Caused by:" /tmp/gradle.log | head -n 40 | tr '\n' ' ' | cut -c1-900)
             echo "::error title=Gradle Build Failure::$ERR"
             exit 1
           }
 
+      - name: Verify APK signing certificate fingerprint
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error title=Missing Release APK::$APK_PATH not found!"
+            exit 1
+          fi
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          "$APKSIGNER" verify --print-certs "$APK_PATH"
+          ACTUAL_SHA=$(keytool -printcert -jarfile "$APK_PATH" | grep -i "SHA256:" | head -n 1 | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+          EXPECTED_SHA="8B:CA:F5:C3:2B:40:D8:0D:33:E3:4F:B3:55:7A:AB:BA:7F:93:23:DF:71:AA:E3:05:DC:D4:D1:2F:1F:67:20:30"
+          echo "APK Certificate SHA-256: $ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error title=Signing Key Mismatch::Expected $EXPECTED_SHA but got $ACTUAL_SHA"
+            exit 1
+          fi
+          echo "Confirmed APK is signed with the permanent Otzar Sefarim key."
+
+      - name: Cleanup keystore from runner temp
+        if: always()
+        run: rm -f "$RUNNER_TEMP/otzar-signing.p12"
+
       - name: Package named APK
         run: |
           VERSION=$(node -p "require('./package.json').version")
           mkdir -p apk-out
-          cp android/app/build/outputs/apk/debug/app-debug.apk "apk-out/Otzar-Sefarim-Mobile-${VERSION}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "apk-out/Otzar-Sefarim-Mobile-${VERSION}.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

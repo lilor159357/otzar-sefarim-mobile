@@ -7,3 +7,4 @@ android/
 *.aab
 *.log
 .DS_Store
+.signing/

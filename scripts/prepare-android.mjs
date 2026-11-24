@@ -75,6 +75,52 @@ if (fs.existsSync(pkgPath) && fs.existsSync(buildGradlePath)) {
   gradle = gradle
     .replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
     .replace(/versionName\s+"[^"]*"/, `versionName "${ver}"`);
+  if (!gradle.includes("signingConfigs {")) {
+    gradle = gradle.replace(
+      /buildTypes\s*\{/,
+      `signingConfigs {
+        otzarRelease {
+            def ksPath = System.getenv("OTZAR_KEYSTORE_PATH")
+            if (ksPath != null && !ksPath.trim().isEmpty()) {
+                storeFile file(ksPath)
+                storeType "PKCS12"
+                storePassword System.getenv("OTZAR_KEYSTORE_PASSWORD")
+                keyAlias (System.getenv("OTZAR_KEY_ALIAS") ?: "otzar")
+                keyPassword System.getenv("OTZAR_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {`
+    );
+  }
+  if (!gradle.includes("signingConfigs.otzarRelease")) {
+    gradle = gradle.replace(
+      /release\s*\{/,
+      `release {
+            if (System.getenv("OTZAR_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.otzarRelease
+            }`
+    );
+    if (/debug\s*\{/.test(gradle)) {
+      gradle = gradle.replace(
+        /debug\s*\{/,
+        `debug {
+            if (System.getenv("OTZAR_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.otzarRelease
+            }`
+      );
+    } else {
+      gradle = gradle.replace(
+        /buildTypes\s*\{/,
+        `buildTypes {
+        debug {
+            if (System.getenv("OTZAR_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.otzarRelease
+            }
+        }`
+      );
+    }
+  }
   fs.writeFileSync(buildGradlePath, gradle, "utf8");
   console.log(`[prepare-android] Synced Gradle versionName=${ver}, versionCode=${versionCode}.`);
 }

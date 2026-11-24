@@ -150,6 +150,9 @@ export function formatFirebaseErrorHe(err: unknown): string {
   if (code.includes("unavailable") || msg.toLowerCase().includes("network") || msg.toLowerCase().includes("offline")) {
     return "אין חיבור רשת זמין — המערכת פועלת על המטמון המקומי";
   }
+  if (msg.includes("cannot be written because its size") || msg.includes("exceeds the maximum allowed size")) {
+    return "משקל התמונות הכולל חרג ממגבלת הענן (1MB) — המערכת כעת דוחסת אותן אוטומטית לפני השידור.";
+  }
   return msg || "שגיאת תקשורת מול הענן";
 }
 
@@ -437,6 +440,15 @@ export class MobileOtzarClient {
     if (!this.firestore) {
       throw new Error("יש להתחבר קודם ל-Firebase בלשונית 'חיבור'");
     }
+    const totalChars =
+      (params.mainBase64?.length || 0) +
+      (params.extraBase64s || []).reduce((acc, s) => acc + (s?.length || 0), 0);
+    if (totalChars > 900000) {
+      throw new Error(
+        `משקל התמונות הכולל (${Math.round((totalChars * 3) / (4 * 1024))} KB) חורג ממגבלת הענן (1 MB). אנא צלם מחדש.`
+      );
+    }
+
     const relayId = `mob-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const nowIso = new Date().toISOString();
 

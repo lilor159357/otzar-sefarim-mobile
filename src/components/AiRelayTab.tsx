@@ -3,7 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Camera as CameraIcon, ImagePlus, Send, Trash2, CheckCircle2, AlertTriangle, Minus, Plus, Star, BookCopy, Layers, RotateCcw } from "lucide-react";
 import type { CabinetDoc, RelaySentItem } from "../types.ts";
-import { compressImageDataUrl, type CompressedCapture } from "../lib/imageCompress.ts";
+import { compressImageDataUrl, compressBatchForRelay, type CompressedCapture } from "../lib/imageCompress.ts";
 import { loadRelayHistory, saveRelayHistory } from "../lib/mobileFirebase.ts";
 
 interface AiRelayTabProps {
@@ -63,7 +63,8 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     dataUrl: string,
     slot: "standard" | "shelf-title" | "shelf-spine" = activeCaptureSlotRef.current
   ) => {
-    const compressed = await compressImageDataUrl(dataUrl, 700000);
+    const maxBudget = slot === "shelf-spine" ? 220000 : slot === "shelf-title" ? 380000 : 380000;
+    const compressed = await compressImageDataUrl(dataUrl, maxBudget);
     if (slot === "shelf-title") {
       setShelfTitlePhoto(compressed);
     } else if (slot === "shelf-spine") {
@@ -190,9 +191,10 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     const totalPhotoCount = 1 + extras.length;
 
     try {
+      const batch = await compressBatchForRelay([main, ...extras], 750000);
       const relayId = await onSendRelay({
-        mainBase64: main.base64,
-        extraBase64s: extras.map((x) => x.base64),
+        mainBase64: batch.mainBase64,
+        extraBase64s: batch.extraBase64s,
         cabinetSyncId: selectedCabinet?.sync_id || null,
         cabinetCode: targetCabinetCode,
         shelfNumber: targetShelf,
@@ -241,7 +243,11 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
           : "התמונות נשלחו לענן! תוכנת המחשב תקלוט אותן אוטומטית בתור הקטלוג.",
       });
     } catch (err: unknown) {
-      setFeedback({ type: "err", text: err instanceof Error ? err.message : "שליחת התמונות נכשלה" });
+      const rawMsg = err instanceof Error ? err.message : "שליחת התמונות נכשלה";
+      const cleanMsg = rawMsg.includes("exceeds the maximum allowed size") || rawMsg.includes("1,048,576")
+        ? "משקל התמונות הכולל חרג ממגבלת הענן. בוצעה דחיסה מותאמת, אנא נסה לשלוח שוב."
+        : rawMsg;
+      setFeedback({ type: "err", text: cleanMsg });
     } finally {
       setSending(false);
     }

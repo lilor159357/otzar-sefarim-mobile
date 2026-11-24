@@ -55,6 +55,20 @@ jobs:
           node scripts/prepare-android.mjs
           npx cap sync android
 
+      - name: Cache Android debug keystore for consistent in-app updates
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: otzar-android-debug-keystore-${{ github.repository_id }}-v1
+
+      - name: Restore custom debug keystore from secret (if provided)
+        if: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 != '' }}
+        env:
+          ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$ANDROID_DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+
       - name: Build Android APK
         working-directory: android
         run: |

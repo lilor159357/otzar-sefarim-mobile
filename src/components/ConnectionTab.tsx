@@ -11,9 +11,19 @@ import {
   Sun,
   Moon,
   Palette,
+  Download,
+  ExternalLink,
+  ShieldCheck,
 } from "lucide-react";
 import type { MobileConnectionConfig, SyncSnapshot } from "../types.ts";
 import { decryptDesktopSetupBundle, parseFirebaseConfigRaw } from "../lib/setupDecrypt.ts";
+import {
+  formatBytesHe,
+  isNativeAndroid,
+  type DownloadProgressInfo,
+  type UpdateCheckResult,
+  type UpdatePreferences,
+} from "../lib/appUpdater.ts";
 
 interface ConnectionTabProps {
   config: MobileConnectionConfig | null;
@@ -21,6 +31,17 @@ interface ConnectionTabProps {
   counts: { books: number; cabinets: number; borrowers: number; loans: number };
   themePreset: "default" | "classic-blue" | "forest-green";
   themeMode: "light" | "dark";
+  installedVersion: string;
+  updatePrefs: UpdatePreferences;
+  updateChecking: boolean;
+  updateDownloading: boolean;
+  updateProgress: DownloadProgressInfo | null;
+  updateInfo: UpdateCheckResult | null;
+  updateError: string | null;
+  updateStatusMsg: string | null;
+  onUpdatePrefsChange: (next: UpdatePreferences) => void;
+  onCheckForUpdates: () => Promise<void>;
+  onInstallUpdate: () => Promise<void>;
   onConnectConfig: (cfg: MobileConnectionConfig) => Promise<void>;
   onSyncNow: () => Promise<void>;
   onFullResync: () => Promise<void>;
@@ -34,6 +55,17 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
   counts,
   themePreset,
   themeMode,
+  installedVersion,
+  updatePrefs,
+  updateChecking,
+  updateDownloading,
+  updateProgress,
+  updateInfo,
+  updateError,
+  updateStatusMsg,
+  onUpdatePrefsChange,
+  onCheckForUpdates,
+  onInstallUpdate,
   onConnectConfig,
   onSyncNow,
   onFullResync,
@@ -371,6 +403,174 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                 </button>
               ))}
             </div>
+          </section>
+
+          {/* App Auto-Update */}
+          <section className="space-y-3 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-sm font-bold text-[var(--otzar-text)]">
+                <Download className="h-4 w-4 text-[var(--otzar-accent)]" />
+                <span>עדכוני אפליקציה אוטומטיים</span>
+              </h2>
+              <span className="rounded-lg bg-[var(--otzar-surface-alt)] px-2.5 py-1 text-xs font-bold tabular-nums text-[var(--otzar-text-muted)]">
+                v{installedVersion}
+              </span>
+            </div>
+
+            <div className="space-y-2 rounded-xl bg-[var(--otzar-surface-alt)] p-3 text-xs">
+              <label className="flex cursor-pointer items-center justify-between gap-3">
+                <div>
+                  <span className="block font-semibold text-[var(--otzar-text)]">
+                    בדיקת עדכונים אוטומטית בהפעלה
+                  </span>
+                  <span className="text-[11px] text-[var(--otzar-text-muted)]">
+                    בודק מול GitHub Releases בכל פתיחת אפליקציה
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={updatePrefs.autoCheckOnLaunch}
+                  onChange={(e) =>
+                    onUpdatePrefsChange({ ...updatePrefs, autoCheckOnLaunch: e.target.checked })
+                  }
+                  className="h-5 w-5 accent-[var(--otzar-accent)]"
+                />
+              </label>
+
+              <label className="flex cursor-pointer items-center justify-between gap-3 border-t border-[var(--otzar-border-muted)] pt-2">
+                <div>
+                  <span className="block font-semibold text-[var(--otzar-text)]">
+                    הורד והצע התקנה אוטומטית כשזמין עדכון
+                  </span>
+                  <span className="text-[11px] text-[var(--otzar-text-muted)]">
+                    מוריד את העדכון מיד ברקע ומקפיץ את מסך ההתקנה (דורש אישור התקנה במכשיר)
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={updatePrefs.autoDownloadAndPrompt}
+                  onChange={(e) =>
+                    onUpdatePrefsChange({ ...updatePrefs, autoDownloadAndPrompt: e.target.checked })
+                  }
+                  className="h-5 w-5 accent-[var(--otzar-accent)]"
+                />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 text-xs text-[var(--otzar-text-muted)]">
+              <span>
+                בדיקה אחרונה:{" "}
+                {updatePrefs.lastCheckedAt
+                  ? new Date(updatePrefs.lastCheckedAt).toLocaleString("he-IL", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : "טרם נבדק"}
+              </span>
+              <button
+                type="button"
+                disabled={updateChecking || updateDownloading}
+                onClick={() => {
+                  void onCheckForUpdates();
+                }}
+                className="flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 text-xs font-bold text-[var(--otzar-text)] active:scale-95 disabled:opacity-45"
+              >
+                <RefreshCw className={"h-3.5 w-3.5 " + (updateChecking ? "animate-spin text-[var(--otzar-accent)]" : "")} />
+                <span>{updateChecking ? "בודק..." : "בדוק עדכונים עכשיו"}</span>
+              </button>
+            </div>
+
+            {updateError && (
+              <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
+                {updateError}
+              </p>
+            )}
+
+            {updateStatusMsg && (
+              <p className="flex items-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{updateStatusMsg}</span>
+              </p>
+            )}
+
+            {updateInfo?.hasUpdate && (
+              <div className="space-y-2.5 rounded-xl border border-[var(--otzar-accent)]/50 bg-[var(--otzar-accent-soft)]/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-[var(--otzar-text)]">
+                    גרסה חדשה זמינה: v{updateInfo.latestVersion}
+                  </div>
+                  {updateInfo.apkSize && (
+                    <span className="text-[11px] font-semibold tabular-nums text-[var(--otzar-text-muted)]">
+                      {formatBytesHe(updateInfo.apkSize)}
+                    </span>
+                  )}
+                </div>
+
+                {updateInfo.releaseNotes && (
+                  <p className="max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-[var(--otzar-bg)]/80 p-2 text-[11px] leading-relaxed text-[var(--otzar-text-muted)]">
+                    {updateInfo.releaseNotes}
+                  </p>
+                )}
+
+                {updateDownloading && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[11px] font-semibold tabular-nums text-[var(--otzar-text)]">
+                      <span>מוריד עדכון...</span>
+                      <span>{updateProgress?.progress ?? 0}%</span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--otzar-border-muted)]">
+                      <div
+                        className="h-full bg-[var(--otzar-accent)] transition-all duration-200"
+                        style={{ width: Math.min(100, Math.max(4, updateProgress?.progress ?? 0)) + "%" }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {updateInfo.apkUrl && (
+                    <button
+                      type="button"
+                      disabled={updateDownloading}
+                      onClick={() => {
+                        void onInstallUpdate();
+                      }}
+                      className="flex min-h-[42px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--otzar-accent)] px-3 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span>
+                        {updateDownloading
+                          ? "מוריד מתקין..."
+                          : isNativeAndroid()
+                          ? "הורד והתקן עדכון"
+                          : "הורד APK"}
+                      </span>
+                    </button>
+                  )}
+
+                  <a
+                    href={updateInfo.apkUrl || updateInfo.releasePageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-h-[42px] items-center justify-center gap-1 rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] px-3 text-xs font-semibold text-[var(--otzar-text)]"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    <span>פתח בדפדפן</span>
+                  </a>
+                </div>
+
+                {isNativeAndroid() && (
+                  <p className="flex items-start gap-1.5 text-[11px] text-[var(--otzar-text-muted)]">
+                    <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--otzar-accent)]" />
+                    <span>
+                      בפעם הראשונה אנדרואיד עשוי לבקש אישור חד-פעמי עבור "התקן אפליקציות לא מוכרות" עבור אוצר ספרים.
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
           </section>
         </div>
       </div>

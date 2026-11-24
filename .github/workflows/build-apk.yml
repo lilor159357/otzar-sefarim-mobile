@@ -76,7 +76,7 @@ jobs:
           chmod +x gradlew
           set -o pipefail
           ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/gradle.log || {
-            ERR=$(grep -iE "error:|Execution failed|What went wrong|> " /tmp/gradle.log | tail -n 25 | tr '\n' ' ' | cut -c1-900)
+            ERR=$(grep -A 3 -iE "\.java:[0-9]+: error:|error:|Execution failed|Caused by:" /tmp/gradle.log | head -n 40 | tr '\n' ' ' | cut -c1-900)
             echo "::error title=Gradle Build Failure::$ERR"
             exit 1
           }

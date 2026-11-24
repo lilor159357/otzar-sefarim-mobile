@@ -126,6 +126,7 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
       continue;
     }
     const normTitle = normalizeHebrewText(book.title);
+    const normSetName = normalizeHebrewText(book.set_name || "");
     const normAuthor = normalizeHebrewText(book.author);
     const normCategory = normalizeHebrewText(book.category);
     const normVolume = normalizeHebrewText(book.volume);
@@ -137,6 +138,7 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
 
     const combinedText = [
       normTitle,
+      normSetName,
       normAuthor,
       normVolume,
       normPublisher,
@@ -157,6 +159,9 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
     if (normTitle.includes(normQuery)) {
       totalScore += 300;
       hint = "שם ספר";
+    } else if (normSetName && normSetName.includes(normQuery)) {
+      totalScore += 270;
+      hint = "שם סט";
     } else if (normAuthor.includes(normQuery)) {
       totalScore += 240;
       hint = "מחבר";
@@ -172,6 +177,10 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
         totalScore += 100;
         matchedTokens++;
         if (!hint) hint = "שם ספר";
+      } else if (normSetName && normSetName.includes(token)) {
+        totalScore += 90;
+        matchedTokens++;
+        if (!hint) hint = "שם סט";
       } else if (
         normAuthor.includes(token) ||
         normCategory.includes(token) ||
@@ -226,4 +235,85 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
 
   results.sort((a, b) => b.score - a.score || a.book.title.localeCompare(b.book.title, "he"));
   return results;
+}
+
+const GEMATRIYA_MAP: Record<string, number> = {
+  א: 1, ב: 2, ג: 3, ד: 4, ה: 5, ו: 6, ז: 7, ח: 8, ט: 9,
+  י: 10, כ: 20, ך: 20, ל: 30, מ: 40, ם: 40, נ: 50, ן: 50,
+  ס: 60, ע: 70, פ: 80, ף: 80, צ: 90, ץ: 90, ק: 100, ר: 200, ש: 300, ת: 400,
+};
+
+export function hebrewGematriya(str: string): number {
+  if (!str) return 0;
+  const clean = str.replace(/["'״׳]/g, "").trim();
+  let sum = 0;
+  for (const ch of clean) {
+    if (GEMATRIYA_MAP[ch]) sum += GEMATRIYA_MAP[ch];
+    else return 0;
+  }
+  return sum;
+}
+
+export function torahNaturalVolumeRank(val: unknown): number {
+  if (!val) return 9999;
+  const s = String(val).trim();
+  if (!s) return 9999;
+  const numMatch = s.match(/\d+/);
+  if (numMatch) return parseInt(numMatch[0], 10);
+  const tokenMatch = s.replace(/^(חלק|כרך|ספר|ח['"״׳]|כ['"״׳])\s*/i, "").trim();
+  const firstWord = tokenMatch.split(/[\s\-–—]/)[0];
+  const g = hebrewGematriya(firstWord);
+  if (g > 0) return g;
+  return 9999;
+}
+
+export function torahNaturalVolumeSort(a: unknown, b: unknown): number {
+  const ra = torahNaturalVolumeRank(a);
+  const rb = torahNaturalVolumeRank(b);
+  if (ra !== rb) return ra - rb;
+  return String(a || "").localeCompare(String(b || ""), "he");
+}
+
+export interface MobileSetVolumeGroup {
+  volumeLabel: string;
+  books: BookDoc[];
+  totalCopies: number;
+  availableCount: number;
+  loanedCount: number;
+  otherCount: number;
+  locationSummary: string;
+}
+
+export function groupMobileSetVolumes(books: BookDoc[]): MobileSetVolumeGroup[] {
+  const map = new Map<string, BookDoc[]>();
+  for (const b of books) {
+    const key = (b.volume || "").trim() || "ללא ציון כרך";
+    const arr = map.get(key) || [];
+    arr.push(b);
+    map.set(key, arr);
+  }
+  const groups: MobileSetVolumeGroup[] = [];
+  for (const [volumeLabel, list] of map.entries()) {
+    const availableCount = list.filter((x) => x.status === "available").length;
+    const loanedCount = list.filter((x) => x.status === "loaned").length;
+    const otherCount = list.length - availableCount - loanedCount;
+    const locs = Array.from(
+      new Set(
+        list
+          .filter((x) => x.cabinet_code)
+          .map((x) => `ארון ${x.cabinet_code}${x.shelf_number ? ` מדף ${x.shelf_number}` : ""}`)
+      )
+    );
+    groups.push({
+      volumeLabel,
+      books: list,
+      totalCopies: list.length,
+      availableCount,
+      loanedCount,
+      otherCount,
+      locationSummary: locs.length > 0 ? locs.join(" / ") : "לא שויך",
+    });
+  }
+  groups.sort((a, b) => torahNaturalVolumeSort(a.volumeLabel, b.volumeLabel));
+  return groups;
 }

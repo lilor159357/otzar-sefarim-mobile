@@ -429,6 +429,9 @@ export class MobileOtzarClient {
     cabinetSyncId: string | null;
     cabinetCode: string | null;
     shelfNumber: number | null;
+    setBatchId?: string | null;
+    isShelfSet?: boolean;
+    presetSetName?: string | null;
     onPickedUp?: (relayId: string) => void;
   }): Promise<string> {
     if (!this.firestore) {
@@ -445,6 +448,9 @@ export class MobileOtzarClient {
       default_cabinet_sync_id: params.cabinetSyncId,
       default_cabinet_code: params.cabinetCode,
       default_shelf_number: params.shelfNumber,
+      set_batch_id: params.setBatchId || null,
+      is_shelf_set: Boolean(params.isShelfSet),
+      preset_set_name: params.presetSetName || "",
       created_at: nowIso,
       device_id: this.deviceId,
     });

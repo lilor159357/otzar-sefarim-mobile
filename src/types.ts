@@ -24,6 +24,7 @@ export interface BookDoc {
   barcode: string;
   barcode_status?: string;
   title: string;
+  set_name?: string;
   author: string;
   volume: string;
   publisher: string;
@@ -96,6 +97,9 @@ export interface RelaySentItem {
   photoCount: number;
   status: "queued" | "picked_up" | "error";
   error?: string;
+  setBatchId?: string | null;
+  isShelfSet?: boolean;
+  presetSetName?: string;
 }
 
 export interface SyncSnapshot {

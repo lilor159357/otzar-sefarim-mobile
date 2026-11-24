@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin } from "lucide-react";
+import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin, Layers, ChevronDown, ChevronUp } from "lucide-react";
 import type { BookDoc, BorrowerDoc, CabinetDoc, LibraryMetaDoc, LoanDoc } from "../types.ts";
-import { searchMobileBooks } from "../lib/torahSearch.ts";
+import { searchMobileBooks, groupMobileSetVolumes } from "../lib/torahSearch.ts";
 import { LibraryMap2D } from "./LibraryMap2D.tsx";
 import { BarcodeScannerModal } from "./BarcodeScannerModal.tsx";
 
@@ -53,6 +53,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
   const [scannerOpen, setScannerOpen] = useState(false);
   const [selectedBook, setSelectedBook] = useState<BookDoc | null>(null);
   const [sheetShowMap, setSheetShowMap] = useState(true);
+  const [expandedVolGroup, setExpandedVolGroup] = useState<string | null>(null);
 
   const bookCountsByCabinet = useMemo(() => {
     const map: Record<string, number> = {};
@@ -260,6 +261,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                   book.shelf_number ? `מדף ${book.shelf_number}` : "",
                 ].filter(Boolean);
                 const metaParts = [
+                  book.set_name && book.set_name !== book.title ? `סט: ${book.set_name}` : "",
                   book.volume ? `חלק ${book.volume}` : "",
                   book.author,
                   locParts.join(" · "),
@@ -272,6 +274,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                       type="button"
                       onClick={() => {
                         setSelectedBook(book);
+                        setExpandedVolGroup(null);
                         setSheetShowMap(true);
                       }}
                       className="flex min-h-[60px] w-full items-center justify-between gap-3 px-3.5 py-2.5 text-right transition-colors active:bg-[var(--otzar-surface-alt)]"
@@ -329,6 +332,11 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                   {selectedBook.title}
                   {selectedBook.volume ? ` (${selectedBook.volume})` : ""}
                 </h2>
+                {selectedBook.set_name && (
+                  <p className="mt-0.5 text-xs font-semibold text-[var(--otzar-accent)]">
+                    סט / סדרה: {selectedBook.set_name}
+                  </p>
+                )}
                 <p className="mt-0.5 text-sm text-[var(--otzar-text-muted)]">
                   {[selectedBook.author, selectedBook.publisher, selectedBook.pub_year]
                     .filter(Boolean)
@@ -392,6 +400,91 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                 הערות: {selectedBook.notes}
               </p>
             )}
+
+            {/* Other volumes in this Set (Torah Natural Sort + Copy Deduplication) */}
+            {selectedBook.set_name && (() => {
+              const targetSet = selectedBook.set_name!.trim();
+              const setBooks = books.filter((b) => (b.set_name || "").trim() === targetSet);
+              const groups = groupMobileSetVolumes(setBooks);
+              if (groups.length === 0 || (groups.length === 1 && groups[0].totalCopies <= 1)) return null;
+              return (
+                <div className="mt-4 space-y-2 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] p-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-[var(--otzar-text)]">
+                    <span className="flex items-center gap-1.5">
+                      <Layers className="h-4 w-4 text-[var(--otzar-accent)]" />
+                      כרכים נוספים בסט זה ({setBooks.length} עותקים ב-{groups.length} כרכים)
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[var(--otzar-border-muted)] rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]">
+                    {groups.map((grp) => {
+                      const isExpanded = expandedVolGroup === grp.volumeLabel;
+                      const isCurrent = (selectedBook.volume || "").trim() === grp.volumeLabel;
+                      const statusParts = [
+                        grp.availableCount > 0 ? `${grp.availableCount} זמינים` : "",
+                        grp.loanedCount > 0 ? `${grp.loanedCount} מושאלים` : "",
+                        grp.otherCount > 0 ? `${grp.otherCount} עיון/אחר` : "",
+                      ].filter(Boolean);
+                      return (
+                        <div key={grp.volumeLabel} className="text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedVolGroup(isExpanded ? null : grp.volumeLabel)}
+                            className={`flex w-full items-center justify-between gap-2 px-3 py-2.5 text-right ${
+                              isCurrent ? "bg-[var(--otzar-accent-soft)]/50 font-bold" : ""
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-semibold text-[var(--otzar-text)]">
+                                {grp.volumeLabel}
+                                {grp.totalCopies > 1 && (
+                                  <span className="mr-1.5 text-[var(--otzar-accent)]">
+                                    · {grp.totalCopies} עותקים ({statusParts.join(", ")})
+                                  </span>
+                                )}
+                                {grp.totalCopies === 1 && (
+                                  <span className="mr-1.5 font-normal text-[var(--otzar-text-muted)]">
+                                    · {statusMeta(grp.books[0].status).label}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[var(--otzar-text-muted)]">{grp.locationSummary}</div>
+                            </div>
+                            {isExpanded ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+                          </button>
+                          {isExpanded && (
+                            <div className="space-y-1 border-t border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 py-2">
+                              {grp.books.map((copy) => {
+                                const cst = statusMeta(copy.status);
+                                return (
+                                  <div key={copy.sync_id} className="flex items-center justify-between py-1">
+                                    <span className="tabular-nums text-[var(--otzar-text)]">
+                                      #{copy.barcode || "ללא ברקוד"} · <span className={cst.textClass}>{cst.label}</span>
+                                    </span>
+                                    {copy.sync_id !== selectedBook.sync_id && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedBook(copy);
+                                          setExpandedVolGroup(null);
+                                          setSheetShowMap(true);
+                                        }}
+                                        className="rounded-lg bg-[var(--otzar-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--otzar-accent)] border border-[var(--otzar-border-muted)]"
+                                      >
+                                        הצג עותק
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Embedded 2D Map Highlight */}
             {(selectedBook.cabinet_sync_id || selectedBook.cabinet_code) && cabinets.length > 0 && (

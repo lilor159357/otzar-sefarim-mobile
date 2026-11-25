@@ -107,6 +107,297 @@ export function parseRomanNumeral(raw: string): number {
   return total > 0 && total <= 100 ? total : 0;
 }
 
+const TORAH_CANONICAL_ENTRIES: Array<[string, number]> = [
+  // 63 Masechtot (Mishnah / Shas) - checked BEFORE generic Seder names
+  // Seder Zeraim (10000 - 11999)
+  ["ברכות", 10010],
+  ["פאה", 10020],
+  ["דמאי", 10030],
+  ["כלאים", 10040],
+  ["כלאיים", 10040],
+  ["שביעית", 10050],
+  ["תרומות", 10060],
+  ["מעשר שני", 10080],
+  ["מעשרות", 10070],
+  ["חלה", 10090],
+  ["ערלה", 10100],
+  ["בכורים", 10110],
+  ["ביכורים", 10110],
+
+  // Seder Moed (12000 - 13999)
+  ["שבת", 12010],
+  ["עירובין", 12020],
+  ["ערובין", 12020],
+  ["פסחים", 12030],
+  ["שקלים", 12040],
+  ["יומא", 12050],
+  ["סוכה", 12060],
+  ["ביצה", 12070],
+  ["ראש השנה", 12080],
+  ["תענית", 12090],
+  ["מגילה", 12100],
+  ["מועד קטן", 12110],
+  ["חגיגה", 12120],
+
+  // Seder Nashim (14000 - 15999)
+  ["יבמות", 14010],
+  ["כתובות", 14020],
+  ["נדרים", 14030],
+  ["נזיר", 14040],
+  ["סוטה", 14050],
+  ["גיטין", 14060],
+  ["קידושין", 14070],
+
+  // Seder Nezikin (16000 - 17999)
+  ["בבא קמא", 16010],
+  ["בבא מציעא", 16020],
+  ["בבא בתרא", 16030],
+  ["סנהדרין", 16040],
+  ["מכות", 16050],
+  ["שבועות", 16060],
+  ["עדיות", 16070],
+  ["עדויות", 16070],
+  ["עבודה זרה", 16080],
+  ["פרקי אבות", 16090],
+  ["אבות", 16090],
+  ["הוריות", 16100],
+
+  // Seder Kodashim (18000 - 19999)
+  ["זבחים", 18010],
+  ["מנחות", 18020],
+  ["חולין", 18030],
+  ["בכורות", 18040],
+  ["ערכין", 18050],
+  ["תמורה", 18060],
+  ["כריתות", 18070],
+  ["מעילה", 18080],
+  ["תמיד", 18090],
+  ["מידות", 18100],
+  ["מדות", 18100],
+  ["קינים", 18110],
+  ["קנים", 18110],
+
+  // Seder Taharot (20000 - 21999)
+  ["כלים", 20010],
+  ["אהלות", 20020],
+  ["אוהלות", 20020],
+  ["נגעים", 20030],
+  ["פרה", 20040],
+  ["טהרות", 20050],
+  ["מקוואות", 20060],
+  ["מקואות", 20060],
+  ["נידה", 20070],
+  ["נדה", 20070],
+  ["מכשירין", 20080],
+  ["זבים", 20090],
+  ["טבול יום", 20100],
+  ["ידיים", 20110],
+  ["ידים", 20110],
+  ["עוקצין", 20120],
+  ["עוקצים", 20120],
+
+  // Generic Sedarim (only matched if no specific Masechet above matched)
+  ["סדר זרעים", 10000],
+  ["סדר מועד", 12000],
+  ["סדר נשים", 14000],
+  ["סדר נזיקין", 16000],
+  ["סדר קדשים", 18000],
+  ["סדר קודשים", 18000],
+  ["סדר טהרות", 20000],
+
+  // Tur / Shulchan Aruch (30000 - 30999)
+  ["אורח חיים", 30010],
+  ["אוח", 30010],
+  ["יורה דעה", 30020],
+  ["יוד", 30020],
+  ["אבן העזר", 30030],
+  ["אהע", 30030],
+  ["חושן משפט", 30040],
+  ["חומ", 30040],
+
+  // Rambam Mishneh Torah (40000 - 41999) - explicit "ספר ..." before bare Tanach/Seder names
+  ["ספר המדע", 40010],
+  ["ספר מדע", 40010],
+  ["המדע", 40010],
+  ["מדע", 40010],
+  ["ספר אהבה", 40020],
+  ["אהבה", 40020],
+  ["ספר זמנים", 40030],
+  ["זמנים", 40030],
+  ["ספר נשים", 40040],
+  ["ספר קדושה", 40050],
+  ["קדושה", 40050],
+  ["ספר הפלאה", 40060],
+  ["הפלאה", 40060],
+  ["ספר זרעים", 40070],
+  ["ספר עבודה", 40080],
+  ["עבודה", 40080],
+  ["ספר קרבנות", 40090],
+  ["קרבנות", 40090],
+  ["ספר טהרה", 40100],
+  ["טהרה", 40100],
+  ["ספר נזיקין", 40110],
+  ["ספר קניין", 40120],
+  ["ספר קנין", 40120],
+  ["קניין", 40120],
+  ["קנין", 40120],
+  ["ספר משפטים", 40130],
+  ["ספר שופטים", 40140],
+
+  // Chumashim & Parshiot (1000 - 1500)
+  ["פרשת בראשית", 1001],
+  ["פרשת נח", 1002],
+  ["לך לך", 1003],
+  ["וירא", 1004],
+  ["חיי שרה", 1005],
+  ["פרשת תולדות", 1006],
+  ["ויצא", 1007],
+  ["וישלח", 1008],
+  ["וישב", 1009],
+  ["מקץ", 1010],
+  ["ויגש", 1011],
+  ["ויחי", 1012],
+  ["בראשית", 1000],
+
+  ["פרשת שמות", 1101],
+  ["וארא", 1102],
+  ["פרשת בא", 1103],
+  ["בשלח", 1104],
+  ["יתרו", 1105],
+  ["פרשת משפטים", 1106],
+  ["פרשת תרומה", 1107],
+  ["תצוה", 1108],
+  ["תצווה", 1108],
+  ["כי תשא", 1109],
+  ["ויקהל", 1110],
+  ["פקודי", 1111],
+  ["שמות", 1100],
+
+  ["פרשת ויקרא", 1201],
+  ["פרשת צו", 1202],
+  ["שמיני", 1203],
+  ["תזריע", 1204],
+  ["מצורע", 1205],
+  ["אחרי מות", 1206],
+  ["קדושים", 1207],
+  ["אמור", 1208],
+  ["בהר", 1209],
+  ["בחוקותי", 1210],
+  ["בחקתי", 1210],
+  ["ויקרא", 1200],
+
+  ["פרשת במדבר", 1301],
+  ["נשא", 1302],
+  ["בהעלותך", 1303],
+  ["בהעלתך", 1303],
+  ["שלח לך", 1304],
+  ["פרשת שלח", 1304],
+  ["קורח", 1305],
+  ["קרח", 1305],
+  ["חוקת", 1306],
+  ["חקת", 1306],
+  ["בלק", 1307],
+  ["פינחס", 1308],
+  ["פנחס", 1308],
+  ["מטות", 1309],
+  ["מסעי", 1310],
+  ["במדבר", 1300],
+
+  ["פרשת דברים", 1401],
+  ["ואתחנן", 1402],
+  ["עקב", 1403],
+  ["ראה", 1404],
+  ["פרשת שופטים", 1405],
+  ["כי תצא", 1406],
+  ["כי תבוא", 1407],
+  ["כי תבא", 1407],
+  ["ניצבים", 1408],
+  ["נצבים", 1408],
+  ["וילך", 1409],
+  ["האזינו", 1410],
+  ["וזאת הברכה", 1411],
+  ["דברים", 1400],
+
+  ["משפטים", 40130],
+
+  // Nevi'im (2000 - 2999)
+  ["יהושע", 2010],
+  ["שופטים", 2020],
+  ["שמואל ב", 2040],
+  ["שמואל א", 2030],
+  ["שמואל", 2030],
+  ["מלכים ב", 2060],
+  ["מלכים א", 2050],
+  ["מלכים", 2050],
+  ["ישעיהו", 2070],
+  ["ישעיה", 2070],
+  ["ירמיהו", 2080],
+  ["ירמיה", 2080],
+  ["יחזקאל", 2090],
+  ["תרי עשר", 2100],
+  ["הושע", 2110],
+  ["יואל", 2120],
+  ["עמוס", 2130],
+  ["עובדיה", 2140],
+  ["יונה", 2150],
+  ["מיכה", 2160],
+  ["נחום", 2170],
+  ["חבקוק", 2180],
+  ["צפניה", 2190],
+  ["חגי", 2200],
+  ["זכריה", 2210],
+  ["מלאכי", 2220],
+
+  // Ketuvim (3000 - 3999)
+  ["תהילים", 3010],
+  ["תהלים", 3010],
+  ["משלי", 3020],
+  ["איוב", 3030],
+  ["חמש מגילות", 3040],
+  ["שיר השירים", 3050],
+  ["רות", 3060],
+  ["איכה", 3070],
+  ["קהלת", 3080],
+  ["אסתר", 3090],
+  ["דניאל", 3100],
+  ["עזרא", 3110],
+  ["נחמיה", 3120],
+  ["דברי הימים ב", 3140],
+  ["דברי הימים א", 3130],
+  ["דברי הימים", 3130],
+
+  // Back matter / Indices
+  ["מפתחות", 95010],
+  ["מפתח", 95010],
+  ["השלמה", 95020],
+  ["נספחים", 95030],
+];
+
+function escapeRegExpCanon(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\export function torahNaturalVolumeRank(");
+}
+
+function normalizeCanonInput(raw: unknown): string {
+  return String(raw || "")
+    .replace(/[\u0591-\u05C7]/g, "")
+    .replace(/["'״׳]/g, "")
+    .replace(/[\-_\/\\.,:;!?()\[\]{}]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function torahSubSeriesRank(val: unknown): number {
+  const norm = normalizeCanonInput(val);
+  if (!norm) return 999999;
+  for (const [term, rank] of TORAH_CANONICAL_ENTRIES) {
+    const re = new RegExp(`(?:^|\\s)${escapeRegExpCanon(term)}(?=$|\\s)`);
+    if (re.test(norm)) {
+      return rank;
+    }
+  }
+  return 999999;
+}
+
 export function torahNaturalVolumeRank(val: unknown, customRules?: VolumeNotationRule[]): number {
   if (!val) return 999999;
   const s = String(val).trim();
@@ -159,13 +450,34 @@ export function torahNaturalVolumeRank(val: unknown, customRules?: VolumeNotatio
     return romanVal;
   }
 
-  // 5. Arabic digits
+  // 5. Canonical Torah / Shas / Tanach / Shulchan Aruch names (check before Gematriya so words like בראשית/שבת are not summed as numbers)
+  const canonRank = torahSubSeriesRank(stripped);
+  if (canonRank < 999999) {
+    // Check if there is also a trailing volume number or Hebrew letter (e.g., "בראשית / חלק א׳" vs "בראשית / חלק ב׳")
+    const tailMatch = stripped.match(/(?:חלק|כרך|ספר)\s*([א-ת]{1,2}|\d+)['"״׳]?\s*$/);
+    if (tailMatch) {
+      const subNum = /^\d+$/.test(tailMatch[1]) ? parseInt(tailMatch[1], 10) : hebrewGematriya(tailMatch[1]);
+      if (subNum > 0) {
+        return 100000 + canonRank + Math.min(999, subNum) / 1000;
+      }
+    }
+    const digitTail = stripped.match(/(\d+)\s*$/);
+    if (digitTail) {
+      const subNum = parseInt(digitTail[1], 10);
+      if (subNum > 0) {
+        return 100000 + canonRank + Math.min(999, subNum) / 1000;
+      }
+    }
+    return 100000 + canonRank;
+  }
+
+  // 6. Arabic digits
   const numMatch = stripped.match(/\d+/);
   if (numMatch) {
     return parseInt(numMatch[0], 10);
   }
 
-  // 6. Hebrew Gematriya token
+  // 7. Hebrew Gematriya token
   const g = hebrewGematriya(firstToken);
   if (g > 0) {
     return g;
@@ -198,22 +510,33 @@ export function compareSetBooks(
   b: SetSortableBook,
   customRules?: VolumeNotationRule[]
 ): number {
-  const ga = a.set_global_number != null && Number.isFinite(Number(a.set_global_number)) ? Number(a.set_global_number) : null;
-  const gb = b.set_global_number != null && Number.isFinite(Number(b.set_global_number)) ? Number(b.set_global_number) : null;
-  if (ga != null && gb != null && ga !== gb) {
-    return ga - gb;
-  }
   const sa = String(a.sub_series || "").trim();
   const sb = String(b.sub_series || "").trim();
+  const ra = sa ? torahSubSeriesRank(sa) : 999999;
+  const rb = sb ? torahSubSeriesRank(sb) : 999999;
+  const ga = a.set_global_number != null && Number.isFinite(Number(a.set_global_number)) ? Number(a.set_global_number) : null;
+  const gb = b.set_global_number != null && Number.isFinite(Number(b.set_global_number)) ? Number(b.set_global_number) : null;
+
+  // Canonical Torah sub-series order takes precedence across distinct canonical sections
+  if (ra < 999999 && rb < 999999 && ra !== rb) {
+    return ra - rb;
+  }
+  if (ga != null && gb != null && ga !== gb && (sa === sb || ra === 999999 || rb === 999999)) {
+    return ga - gb;
+  }
   if (sa !== sb) {
+    if (ra !== rb) return ra - rb;
     if (ga != null && gb == null) return -1;
     if (ga == null && gb != null) return 1;
     if (!sa) return 1;
     if (!sb) return -1;
+    const subVolCmp = torahNaturalVolumeRank(sa, customRules) - torahNaturalVolumeRank(sb, customRules);
+    if (subVolCmp !== 0) return subVolCmp;
     return sa.localeCompare(sb, "he");
   }
   if (ga != null && gb == null) return -1;
   if (ga == null && gb != null) return 1;
+  if (ga != null && gb != null && ga !== gb) return ga - gb;
   const volCmp = torahNaturalVolumeSort(a.volume, b.volume, customRules);
   if (volCmp !== 0) return volCmp;
   const titleCmp = String(a.title || "").localeCompare(String(b.title || ""), "he");

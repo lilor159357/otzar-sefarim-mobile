@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin, Layers, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin, Layers, ChevronDown, ChevronUp, ArrowUpDown } from "lucide-react";
 import type { BookDoc, BorrowerDoc, CabinetDoc, LibraryMetaDoc, LoanDoc } from "../types.ts";
 import { searchMobileBooks, groupMobileSetBySubSeries, type MobileSetSubSeriesSection, type MobileSetVolumeGroup } from "../lib/torahSearch.ts";
 import { useStrings } from "../lib/stringsContext.tsx";
@@ -56,6 +56,8 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
   const [selectedBook, setSelectedBook] = useState<BookDoc | null>(null);
   const [sheetShowMap, setSheetShowMap] = useState(true);
   const [expandedVolGroup, setExpandedVolGroup] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<string>("default");
+  const [setTypeFilter, setSetTypeFilter] = useState<"all" | "set_only" | "single_only">("all");
 
   const bookCountsByCabinet = useMemo(() => {
     const map: Record<string, number> = {};
@@ -90,12 +92,41 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
 
   const filteredResults = useMemo(() => {
     const scored = searchMobileBooks(books, queryText);
-    return scored.filter(({ book }) => {
+    const filtered = scored.filter(({ book }) => {
       if (statusFilter !== "all" && book.status !== statusFilter) return false;
       if (selectedCabinetId && book.cabinet_sync_id !== selectedCabinetId) return false;
+      if (setTypeFilter === "set_only" && !book.set_name?.trim()) return false;
+      if (setTypeFilter === "single_only" && book.set_name?.trim()) return false;
       return true;
     });
-  }, [books, queryText, statusFilter, selectedCabinetId]);
+    if (sortBy === "default") return filtered;
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      const ba = a.book;
+      const bb = b.book;
+      switch (sortBy) {
+        case "title_asc":
+          return (ba.title || "").localeCompare(bb.title || "", "he");
+        case "title_desc":
+          return (bb.title || "").localeCompare(ba.title || "", "he");
+        case "author_asc":
+          return (ba.author || "").localeCompare(bb.author || "", "he");
+        case "publisher_asc":
+          return (ba.publisher || "").localeCompare(bb.publisher || "", "he");
+        case "year_desc":
+          return (bb.pub_year || "").localeCompare(ba.pub_year || "", "he");
+        case "location_asc": {
+          const cabA = ba.cabinet_code || "תתת";
+          const cabB = bb.cabinet_code || "תתת";
+          if (cabA !== cabB) return cabA.localeCompare(cabB, "he");
+          return (ba.shelf_number || 0) - (bb.shelf_number || 0);
+        }
+        default:
+          return 0;
+      }
+    });
+    return copy;
+  }, [books, queryText, statusFilter, selectedCabinetId, setTypeFilter, sortBy]);
 
   const visibleResults = filteredResults.slice(0, 120);
 
@@ -196,6 +227,48 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
         })}
       </div>
 
+      
+      {/* Sort & Cabinet/Set Filter Row */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex items-center gap-1 flex-1 min-w-[140px]">
+          <ArrowUpDown className="h-3.5 w-3.5 text-[var(--otzar-text-muted)] shrink-0" />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="min-h-[38px] w-full rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-2.5 text-xs font-semibold text-[var(--otzar-text)] outline-none"
+          >
+            <option value="default">מיון: התאמה לחיפוש</option>
+            <option value="title_asc">שם הספר (א-ת)</option>
+            <option value="title_desc">שם הספר (ת-א)</option>
+            <option value="author_asc">מחבר (א-ת)</option>
+            <option value="publisher_asc">הוצאה לאור</option>
+            <option value="year_desc">שנת הוצאה</option>
+            <option value="location_asc">מיקום בארון</option>
+          </select>
+        </div>
+        <select
+          value={selectedCabinetId || ""}
+          onChange={(e) => setSelectedCabinetId(e.target.value || null)}
+          className="min-h-[38px] rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-2.5 text-xs font-semibold text-[var(--otzar-text)] outline-none"
+        >
+          <option value="">כל הארונות</option>
+          {cabinets.map((c) => (
+            <option key={c.sync_id} value={c.sync_id}>
+              ארון {c.code}
+            </option>
+          ))}
+        </select>
+        <select
+          value={setTypeFilter}
+          onChange={(e) => setSetTypeFilter(e.target.value as any)}
+          className="min-h-[38px] rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-2.5 text-xs font-semibold text-[var(--otzar-text)] outline-none"
+        >
+          <option value="all">הכל (סט/בודד)</option>
+          <option value="set_only">סטים בלבד</option>
+          <option value="single_only">בודדים בלבד</option>
+        </select>
+      </div>
+
       {/* Responsive Content: Map + Results */}
       <div className={showMap ? "grid gap-4 lg:grid-cols-12" : "space-y-3"}>
         {showMap && (
@@ -259,7 +332,7 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
               {visibleResults.map(({ book, matchHint }) => {
                 const st = statusMeta(book.status);
                 const locParts = [
-                  book.cabinet_code ? `ארון ${book.cabinet_code}` : "",
+                  book.cabinet_code ? `ארון ${book.cabinet_code}` : "ללא שיוך ארון",
                   book.shelf_number ? `מדף ${book.shelf_number}` : "",
                 ].filter(Boolean);
                 const metaParts = [

@@ -27,6 +27,7 @@ import { SearchAndMapTab } from "./components/SearchAndMapTab.tsx";
 import { CirculationTab } from "./components/CirculationTab.tsx";
 import { AiRelayTab } from "./components/AiRelayTab.tsx";
 import { ConnectionTab } from "./components/ConnectionTab.tsx";
+import { BugReportModal } from "./components/BugReportModal.tsx";
 import { useStrings } from "./lib/stringsContext.tsx";
 
 const THEME_STORAGE_KEY = "otzar_mobile_theme_v1";
@@ -75,6 +76,7 @@ export function App() {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [bugModalOpen, setBugModalOpen] = useState(false);
   const [, setTick] = useState(0);
 
   const clientRef = useRef<MobileOtzarClient | null>(null);
@@ -254,7 +256,8 @@ export function App() {
 
   useEffect(() => {
     void getInstalledVersion().then(setInstalledVersion);
-  }, []);
+    void client.hydrateCache();
+  }, [client]);
 
   useEffect(() => {
     const prefs = loadUpdatePrefs();
@@ -319,6 +322,7 @@ export function App() {
           void handleSyncNow();
         }}
         onOpenSettings={() => setActiveTab("settings")}
+        onOpenBugReport={() => setBugModalOpen(true)}
       />
       {updateInfo?.hasUpdate &&
         (updateDownloading ||
@@ -460,6 +464,15 @@ export function App() {
         )}
       </main>
 
+      <BugReportModal
+        open={bugModalOpen}
+        onClose={() => setBugModalOpen(false)}
+        appVersion={installedVersion}
+        booksCount={data.books.length}
+        cabinetsCount={data.cabinets.length}
+        connected={sync.connected}
+        onSubmitReport={(params) => client.submitBugReport(params)}
+      />
       <BottomNav
         activeTab={activeTab}
         onSelect={setActiveTab}

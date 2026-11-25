@@ -1,3 +1,4 @@
+import { idbGet, idbRemove, idbSet } from "./indexedDbStorage.ts";
 import { deleteApp, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
 import {
@@ -112,11 +113,36 @@ export function loadMobileCache(): MobileLibraryCache {
 }
 
 export function saveMobileCache(cache: MobileLibraryCache): void {
+  void idbSet(CACHE_STORAGE_KEY, cache);
   try {
-    localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(cache));
-  } catch {
-    // Ignore storage quota overflow if library grows huge
+    // Clean legacy localStorage cache to avoid quota errors
+    if (localStorage.getItem(CACHE_STORAGE_KEY)) {
+      localStorage.removeItem(CACHE_STORAGE_KEY);
+    }
+  } catch {}
+}
+
+export async function loadMobileCacheAsync(): Promise<MobileLibraryCache | null> {
+  const fromIdb = await idbGet<Partial<MobileLibraryCache>>(CACHE_STORAGE_KEY);
+  if (fromIdb && (fromIdb.books || fromIdb.cabinets)) {
+    return {
+      cabinets: fromIdb.cabinets || {},
+      books: fromIdb.books || {},
+      borrowers: fromIdb.borrowers || {},
+      loans: fromIdb.loans || {},
+      meta: fromIdb.meta || { library_name: "אוצר ספרים", default_loan_days: 14 },
+      cursors: fromIdb.cursors || { cabinet: "", borrower: "", book: "", loan: "" },
+      lastSyncAt: fromIdb.lastSyncAt || null,
+    };
   }
+  // Migrate from legacy localStorage if exists
+  const legacy = loadMobileCache();
+  if (Object.keys(legacy.books).length > 0 || Object.keys(legacy.cabinets).length > 0) {
+    await idbSet(CACHE_STORAGE_KEY, legacy);
+    try { localStorage.removeItem(CACHE_STORAGE_KEY); } catch {}
+    return legacy;
+  }
+  return null;
 }
 
 export function loadRelayHistory(): RelaySentItem[] {
@@ -163,6 +189,7 @@ export class MobileOtzarClient {
   private appSeq = 0;
   private unsubscribers: Unsubscribe[] = [];
   private deviceId = getOrCreateMobileDeviceId();
+  private authEmail = "";
   private cache: MobileLibraryCache = loadMobileCache();
   private snapshot: SyncSnapshot = {
     connected: false,
@@ -229,9 +256,19 @@ export class MobileOtzarClient {
     this.onChange();
   }
 
+  public async hydrateCache(): Promise<void> {
+    const stored = await loadMobileCacheAsync();
+    if (stored) {
+      this.cache = stored;
+      this.snapshot.lastSyncAt = stored.lastSyncAt;
+      this.onChange();
+    }
+  }
+
   public clearCache(): void {
     this.cache = defaultCache();
-    localStorage.removeItem(CACHE_STORAGE_KEY);
+    void idbRemove(CACHE_STORAGE_KEY);
+    try { localStorage.removeItem(CACHE_STORAGE_KEY); } catch {}
     this.snapshot.lastSyncAt = null;
     this.onChange();
   }
@@ -248,6 +285,7 @@ export class MobileOtzarClient {
       const auth = getAuth(app);
       const fsClient = initializeFirestore(app, { experimentalForceLongPolling: true });
       await signInWithEmailAndPassword(auth, cfg.email.trim(), cfg.password);
+      this.authEmail = cfg.email.trim();
 
       this.app = app;
       this.firestore = fsClient;
@@ -493,7 +531,7 @@ export class MobileOtzarClient {
     this.onStringsChange?.(map);
   }
 
-  public async sendRelayPhotos(params: {
+    public async sendRelayPhotos(params: {
     mainBase64: string;
     extraBase64s: string[];
     cabinetSyncId: string | null;
@@ -506,52 +544,116 @@ export class MobileOtzarClient {
     onPickedUp?: (relayId: string) => void;
   }): Promise<string> {
     if (!this.firestore) {
-      throw new Error("יש להתחבר קודם ל-Firebase בלשונית 'חיבור'");
-    }
-    const totalChars =
-      (params.mainBase64?.length || 0) +
-      (params.extraBase64s || []).reduce((acc, s) => acc + (s?.length || 0), 0);
-    if (totalChars > 900000) {
-      throw new Error(
-        `משקל התמונות הכולל (${Math.round((totalChars * 3) / (4 * 1024))} KB) חורג ממגבלת הענן (1 MB). אנא צלם מחדש.`
-      );
+      throw new Error("לא מחובר לענן Firebase כרגע. בדוק חיבור לאינטרנט והגדרות.");
     }
 
-    const relayId = `mob-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const allImages = [params.mainBase64, ...(params.extraBase64s || [])].filter(Boolean);
+    const totalChars = allImages.reduce((acc, s) => acc + s.length, 0);
     const nowIso = new Date().toISOString();
 
-    await setDoc(doc(this.firestore, "ai_relay_queue", relayId), {
-      relay_id: relayId,
-      image_base64: params.mainBase64,
-      extra_images_base64: params.extraBase64s.slice(0, 5),
-      mime_type: "image/jpeg",
-      default_cabinet_sync_id: params.cabinetSyncId,
-      default_cabinet_code: params.cabinetCode,
-      default_shelf_number: params.shelfNumber,
-      set_batch_id: params.setBatchId || null,
-      is_shelf_set: Boolean(params.isShelfSet),
-      preset_set_name: params.presetSetName || "",
-      ...(typeof params.titleImagesCount === "number"
-        ? { title_images_count: Math.max(0, Math.round(params.titleImagesCount)) }
-        : {}),
-      created_at: nowIso,
-      device_id: this.deviceId,
-    });
+    // If total payload is well below 1MB Firestore cap (< 580K chars ~ 435KB), send as single doc
+    if (totalChars <= 580000 && allImages.length <= 4) {
+      const relayId = `mob-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await setDoc(doc(this.firestore, "ai_relay_queue", relayId), {
+        relay_id: relayId,
+        image_base64: params.mainBase64,
+        extra_images_base64: params.extraBase64s.slice(0, 5),
+        mime_type: "image/jpeg",
+        default_cabinet_sync_id: params.cabinetSyncId,
+        default_cabinet_code: params.cabinetCode,
+        default_shelf_number: params.shelfNumber,
+        set_batch_id: params.setBatchId || null,
+        is_shelf_set: Boolean(params.isShelfSet),
+        preset_set_name: params.presetSetName || "",
+        ...(typeof params.titleImagesCount === "number"
+          ? { title_images_count: Math.max(0, Math.round(params.titleImagesCount)) }
+          : {}),
+        created_at: nowIso,
+        device_id: this.deviceId,
+      });
+
+      if (params.onPickedUp) {
+        let seenOnce = false;
+        const unsub = onSnapshot(doc(this.firestore, "ai_relay_queue", relayId), (snap) => {
+          if (snap.exists()) {
+            seenOnce = true;
+          } else if (seenOnce) {
+            params.onPickedUp?.(relayId);
+            unsub();
+          }
+        });
+        this.unsubscribers.push(unsub);
+      }
+      return relayId;
+    }
+
+    // Chunked multi-part upload (<450KB per Firestore document) so multi-page books / shelf sets never fail 1MB limit
+    const groupId = `mobgrp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const totalParts = allImages.length;
+    for (let idx = 0; idx < totalParts; idx++) {
+      const partRelayId = `${groupId}_p${idx}`;
+      const imgB64 = allImages[idx];
+      await setDoc(doc(this.firestore, "ai_relay_queue", partRelayId), {
+        relay_id: partRelayId,
+        group_id: groupId,
+        part_index: idx,
+        total_parts: totalParts,
+        image_base64: imgB64,
+        mime_type: "image/jpeg",
+        default_cabinet_sync_id: params.cabinetSyncId,
+        default_cabinet_code: params.cabinetCode,
+        default_shelf_number: params.shelfNumber,
+        set_batch_id: params.setBatchId || null,
+        is_shelf_set: Boolean(params.isShelfSet),
+        preset_set_name: params.presetSetName || "",
+        ...(typeof params.titleImagesCount === "number"
+          ? { title_images_count: Math.max(0, Math.round(params.titleImagesCount)) }
+          : {}),
+        created_at: nowIso,
+        device_id: this.deviceId,
+      });
+    }
 
     if (params.onPickedUp) {
+      const firstPartId = `${groupId}_p0`;
       let seenOnce = false;
-      const unsub = onSnapshot(doc(this.firestore, "ai_relay_queue", relayId), (snap) => {
+      const unsub = onSnapshot(doc(this.firestore, "ai_relay_queue", firstPartId), (snap) => {
         if (snap.exists()) {
           seenOnce = true;
         } else if (seenOnce) {
-          params.onPickedUp?.(relayId);
+          params.onPickedUp?.(groupId);
           unsub();
         }
       });
       this.unsubscribers.push(unsub);
     }
 
-    return relayId;
+    return groupId;
+  }
+
+  public async submitBugReport(params: {
+    title: string;
+    description: string;
+    category: string;
+    diagnostics: string;
+  }): Promise<{ ok: boolean; reportId: string }> {
+    if (!this.firestore) {
+      throw new Error("המכשיר לא מחובר לענן Firebase כרגע.");
+    }
+    const reportId = `mobrep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    await setDoc(doc(this.firestore, "bug_reports", reportId), {
+      report_id: reportId,
+      title: params.title,
+      description: params.description,
+      category: params.category || "סנכרון ומובייל",
+      platform: "Mobile",
+      app_version: typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "1.0.10",
+      diagnostics: params.diagnostics || "{}",
+      user_email: this.authEmail || "mobile-user",
+      status: "open",
+      created_at: new Date().toISOString(),
+    });
+    return { ok: true, reportId };
   }
 
   public async checkoutBooks(params: {

@@ -1,6 +1,6 @@
 import React from "react";
 import { useStrings } from "../lib/stringsContext.tsx";
-import { RefreshCw, Wifi, WifiOff, Cloud } from "lucide-react";
+import { RefreshCw, Wifi, WifiOff, Cloud, Bug } from "lucide-react";
 import type { SyncSnapshot } from "../types.ts";
 
 interface MobileTopBarProps {
@@ -10,6 +10,7 @@ interface MobileTopBarProps {
   hasConfig: boolean;
   onSyncNow: () => void;
   onOpenSettings: () => void;
+  onOpenBugReport?: () => void;
 }
 
 export const MobileTopBar: React.FC<MobileTopBarProps> = ({
@@ -19,6 +20,7 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
   hasConfig,
   onSyncNow,
   onOpenSettings,
+  onOpenBugReport,
 }) => {
   const { t } = useStrings();
   const statusLabel = !hasConfig
@@ -62,6 +64,17 @@ export const MobileTopBar: React.FC<MobileTopBarProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          {onOpenBugReport && (
+            <button
+              type="button"
+              onClick={onOpenBugReport}
+              aria-label="דווח על תקלה"
+              title="דווח על תקלה"
+              className="flex h-11 w-11 items-center justify-center rounded-xl text-rose-600 dark:text-rose-400 hover:bg-[var(--otzar-surface-alt)] active:scale-95"
+            >
+              <Bug className="h-5 w-5" />
+            </button>
+          )}
           {!sync.connected && hasConfig && (
             <button
               type="button"

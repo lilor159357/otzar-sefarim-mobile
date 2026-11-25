@@ -94,6 +94,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     initialSticky.captureMode === "shelf-set" ? "shelf-set" : "standard"
   );
   const [photos, setPhotos] = useState<CompressedCapture[]>([]);
+  const [multiPhotoMode, setMultiPhotoMode] = useState<"same_book" | "separate_volumes">("same_book");
   const [shelfTitlePhotos, setShelfTitlePhotos] = useState<CompressedCapture[]>([]);
   const [shelfSpinePhotos, setShelfSpinePhotos] = useState<CompressedCapture[]>([]);
   const [stickySetEnabled, setStickySetEnabled] = useState<boolean>(Boolean(initialSticky.stickySetEnabled));
@@ -209,14 +210,14 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     } else if (slot === "shelf-spine") {
       setShelfSpinePhotos((prev) => [...prev, compressed].slice(0, 3));
     } else {
-      setPhotos((prev) => [...prev, compressed].slice(0, 4));
+      setPhotos((prev) => [...prev, compressed].slice(0, 10));
     }
   };
 
   const handleCaptureCamera = async (slot: "standard" | "shelf-title" | "shelf-spine" = "standard") => {
     setFeedback(null);
     activeCaptureSlotRef.current = slot;
-    if (slot === "standard" && photos.length >= 4) {
+    if (slot === "standard" && photos.length >= 10) {
       setFeedback({ type: "err", text: "ניתן לצרף עד 4 תמונות במשלוח אחד (שדרה ראשית + שער/זוויות)." });
       return;
     }
@@ -258,7 +259,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
   const handlePickGallery = async (slot: "standard" | "shelf-title" | "shelf-spine" = "standard") => {
     setFeedback(null);
     activeCaptureSlotRef.current = slot;
-    if (slot === "standard" && photos.length >= 4) {
+    if (slot === "standard" && photos.length >= 10) {
       setFeedback({ type: "err", text: "ניתן לצרף עד 4 תמונות במשלוח אחד." });
       return;
     }
@@ -311,7 +312,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
           ? Math.max(0, 3 - shelfTitlePhotos.length)
           : slot === "shelf-spine"
           ? Math.max(0, 3 - shelfSpinePhotos.length)
-          : Math.max(0, 4 - photos.length);
+          : Math.max(0, 10 - photos.length);
       for (const file of files.slice(0, limitCount)) {
         const rawUrl = await readFileAsDataUrl(file);
         await appendCompressedDataUrl(rawUrl, slot);
@@ -327,7 +328,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
   const canSendShelfSet =
     shelfTitlePhotos.length > 0 || (hasPresetSet && shelfSpinePhotos.length > 0);
 
-  const handleSend = async () => {
+    const handleSend = async () => {
     const isShelf = captureMode === "shelf-set";
     if (isShelf && !canSendShelfSet) return;
     if (!isShelf && photos.length === 0) return;
@@ -337,12 +338,64 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
     const targetCabinetCode = selectedCabinet?.code || null;
     const targetShelf = selectedCabinet && useShelf ? shelfNumber : null;
 
-    const ordered = isShelf ? [...shelfTitlePhotos, ...shelfSpinePhotos] : photos;
-    const totalPhotoCount = ordered.length;
-    const titleCount = isShelf ? shelfTitlePhotos.length : 1;
-
     try {
-      const batch = await compressBatchForRelay(ordered, 750000, titleCount);
+      // If user chose multiple photos and marked each as a separate volume in a set:
+      if (!isShelf && photos.length > 1 && multiPhotoMode === "separate_volumes") {
+        const activeBatchId = stickySetEnabled ? stickyBatchId : `mobbatch_${Date.now()}`;
+        const newEntries: RelaySentItem[] = [];
+        for (let i = 0; i < photos.length; i++) {
+          const singleBatch = await compressBatchForRelay([photos[i]], 420000, 1);
+          const relayId = await onSendRelay({
+            mainBase64: singleBatch.mainBase64,
+            extraBase64s: [],
+            cabinetSyncId: selectedCabinet?.sync_id || null,
+            cabinetCode: targetCabinetCode,
+            shelfNumber: targetShelf,
+            setBatchId: activeBatchId,
+            isShelfSet: false,
+            presetSetName: presetSetName.trim(),
+            onPickedUp: (pickedId) => {
+              setHistory((prev) => {
+                const updated = prev.map((item) =>
+                  item.relayId === pickedId ? { ...item, status: "picked_up" as const } : item
+                );
+                saveRelayHistory(updated);
+                return updated;
+              });
+            },
+          });
+          newEntries.push({
+            relayId,
+            createdAt: new Date().toISOString(),
+            cabinetCode: targetCabinetCode,
+            shelfNumber: targetShelf,
+            photoCount: 1,
+            status: "queued",
+            setBatchId: activeBatchId,
+            isShelfSet: false,
+            presetSetName: presetSetName.trim() || undefined,
+          });
+        }
+        const nextHistory = [...newEntries, ...history].slice(0, 20);
+        setHistory(nextHistory);
+        saveRelayHistory(nextHistory);
+        setPhotos([]);
+        if (stickySetEnabled) {
+          setStickyBatchCount((c) => c + newEntries.length);
+        }
+        setFeedback({
+          type: "ok",
+          text: `נשלחו בהצלחה ${newEntries.length} כרכים נפרדים במקבץ סט אל המחשב לפענוח AI!`,
+        });
+        return;
+      }
+
+      const ordered = isShelf ? [...shelfTitlePhotos, ...shelfSpinePhotos] : photos;
+      const totalPhotoCount = ordered.length;
+      const titleCount = isShelf ? shelfTitlePhotos.length : 1;
+
+      // Compress individual images to safe ~350KB each (chunked uploader splits >580K total across docs safely)
+      const batch = await compressBatchForRelay(ordered, ordered.length * 360000, titleCount);
       const relayId = await onSendRelay({
         mainBase64: batch.mainBase64,
         extraBase64s: batch.extraBase64s,
@@ -571,7 +624,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
                 className="h-4 w-4 accent-[var(--otzar-accent)]"
               />
               <Layers className="h-4 w-4 text-[var(--otzar-accent)]" />
-              <span>קיבוץ צילומים לסט (Sticky Set)</span>
+              <span>נעילת סדרה רציפה — כל צילום מתווסף אוטומטית לאותו סט</span>
             </label>
             {stickySetEnabled && (
               <button
@@ -768,7 +821,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              disabled={processingPhoto || photos.length >= 4}
+              disabled={processingPhoto || photos.length >= 10}
               onClick={() => handleCaptureCamera("standard")}
               className="flex min-h-[48px] items-center justify-center gap-2 rounded-2xl bg-[var(--otzar-accent)] px-3 font-bold text-white active:scale-[0.98] disabled:opacity-45"
             >
@@ -778,7 +831,7 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
 
             <button
               type="button"
-              disabled={processingPhoto || photos.length >= 4}
+              disabled={processingPhoto || photos.length >= 10}
               onClick={() => handlePickGallery("standard")}
               className="flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 font-semibold text-[var(--otzar-text)] active:scale-[0.98] disabled:opacity-45"
             >
@@ -786,6 +839,33 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
               <span>מהגלריה</span>
             </button>
           </div>
+
+          
+          {photos.length > 1 && (
+            <div className="rounded-xl border border-[var(--otzar-border)] bg-[var(--otzar-surface-alt)] p-2.5 space-y-1.5 text-xs">
+              <span className="font-bold text-[var(--otzar-text)]">איך להתייחס ל-{photos.length} התמונות שנבחרו?</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setMultiPhotoMode("same_book")}
+                  className={"min-h-[38px] rounded-lg px-2 font-semibold transition-colors " + (multiPhotoMode === "same_book"
+                    ? "bg-[var(--otzar-accent)] text-white"
+                    : "bg-[var(--otzar-bg)] text-[var(--otzar-text-muted)] border border-[var(--otzar-border-muted)]")}
+                >
+                  כל התמונות לאותו ספר
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMultiPhotoMode("separate_volumes")}
+                  className={"min-h-[38px] rounded-lg px-2 font-semibold transition-colors " + (multiPhotoMode === "separate_volumes"
+                    ? "bg-[var(--otzar-accent)] text-white"
+                    : "bg-[var(--otzar-bg)] text-[var(--otzar-text-muted)] border border-[var(--otzar-border-muted)]")}
+                >
+                  כל תמונה כרך נפרד בסט
+                </button>
+              </div>
+            </div>
+          )}
 
           {photos.length === 0 ? (
             <div className="flex min-h-[150px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] p-5 text-center text-xs text-[var(--otzar-text-muted)]">

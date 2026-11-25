@@ -9,7 +9,7 @@ export const STRINGS_DICTIONARY_VERSION = 2;
 
 export const DEFAULT_STRINGS = {
   common: {
-    appName: "אוצר ספרים",
+    appName: "אוצר הספרים",
     appSubtitle: "מערכת ניהול ספרייה תורנית",
     save: "שמור",
     saving: "שומר...",

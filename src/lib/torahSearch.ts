@@ -1,4 +1,13 @@
-import type { BookDoc } from "../types.ts";
+import type { BookDoc, VolumeNotationRule } from "../types.ts";
+import {
+  hebrewGematriya,
+  torahNaturalVolumeRank,
+  torahNaturalVolumeSort,
+  compareSetBooks,
+  extractQueryCoverageTargets,
+  matchCoverageRange,
+  parseHebrewOrArabicNumber,
+} from "../../shared/torah/volumeAndCoverage.ts";
 
 const HEBREW_FINAL_MAP: Record<string, string> = {
   ך: "כ",
@@ -113,6 +122,8 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
   }
   const queryTokens = normQuery.split(" ").filter(Boolean);
   const fullPhraseSynonyms = SYNONYM_MAP.get(normQuery) || [];
+  const coverageTargets = extractQueryCoverageTargets(rawQuery);
+  const hasExplicitCoverageTarget = coverageTargets.some((t) => t.explicit);
   const results: ScoredMobileBook[] = [];
 
   for (const book of books) {
@@ -127,6 +138,8 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
     }
     const normTitle = normalizeHebrewText(book.title);
     const normSetName = normalizeHebrewText(book.set_name || "");
+    const normSubSeries = normalizeHebrewText(book.sub_series || "");
+    const normCoverage = normalizeHebrewText(book.coverage_range || "");
     const normAuthor = normalizeHebrewText(book.author);
     const normCategory = normalizeHebrewText(book.category);
     const normVolume = normalizeHebrewText(book.volume);
@@ -139,6 +152,8 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
     const combinedText = [
       normTitle,
       normSetName,
+      normSubSeries,
+      normCoverage,
       normAuthor,
       normVolume,
       normPublisher,
@@ -155,6 +170,7 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
     let totalScore = 0;
     let matchedTokens = 0;
     let hint = "";
+    const unmatchedTokens: string[] = [];
 
     if (normTitle.includes(normQuery)) {
       totalScore += 300;
@@ -162,6 +178,9 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
     } else if (normSetName && normSetName.includes(normQuery)) {
       totalScore += 270;
       hint = "שם סט";
+    } else if (normSubSeries && normSubSeries.includes(normQuery)) {
+      totalScore += 260;
+      hint = "תת-סדרה";
     } else if (normAuthor.includes(normQuery)) {
       totalScore += 240;
       hint = "מחבר";
@@ -181,17 +200,22 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
         totalScore += 90;
         matchedTokens++;
         if (!hint) hint = "שם סט";
+      } else if (normSubSeries && normSubSeries.includes(token)) {
+        totalScore += 90;
+        matchedTokens++;
+        if (!hint) hint = "תת-סדרה";
       } else if (
         normAuthor.includes(token) ||
         normCategory.includes(token) ||
         normVolume.includes(token) ||
+        normCoverage.includes(token) ||
         normPublisher.includes(token) ||
         normPubYear.includes(token) ||
         normEdition.includes(token)
       ) {
         totalScore += 80;
         matchedTokens++;
-        if (!hint) hint = "פרטי ספר";
+        if (!hint) hint = normCoverage.includes(token) ? "טווח סימנים/דפים" : "פרטי ספר";
       } else if (parsedTags.some((t) => t.includes(token))) {
         totalScore += 75;
         matchedTokens++;
@@ -224,6 +248,32 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
           totalScore += bestDist === 1 ? 40 : 25;
           matchedTokens++;
           if (!hint) hint = "התאמה קרובה";
+        } else {
+          unmatchedTokens.push(token);
+        }
+      } else {
+        unmatchedTokens.push(token);
+      }
+    }
+
+    const rawCoverageSource =
+      String(book.coverage_range || "").trim() ||
+      (/(סימנ|סימן|דפ|דף|פרק|\d+\s*[\-–—]+\s*\d+)/.test(String(book.volume || "")) ? String(book.volume || "").trim() : "");
+    if (rawCoverageSource && coverageTargets.length > 0 && (hasExplicitCoverageTarget || unmatchedTokens.length > 0)) {
+      const covMatch = matchCoverageRange(rawCoverageSource, coverageTargets);
+      if (covMatch) {
+        const markerWords = new Set(["סימנ", "סימנימ", "סי", "דפ", "דפימ", "פרק", "פרקימ", "עמוד", "עמ", "עד"]);
+        let credited = 0;
+        for (const ut of unmatchedTokens) {
+          const utNum = parseHebrewOrArabicNumber(ut);
+          if ((covMatch.explicit && markerWords.has(ut)) || (utNum > 0 && utNum === covMatch.value)) {
+            credited++;
+          }
+        }
+        if (covMatch.explicit || credited > 0) {
+          matchedTokens = Math.min(queryTokens.length, matchedTokens + credited);
+          totalScore += covMatch.explicit ? 180 : 125;
+          hint = covMatch.hint;
         }
       }
     }
@@ -237,45 +287,13 @@ export function searchMobileBooks(books: BookDoc[], rawQuery: string): ScoredMob
   return results;
 }
 
-const GEMATRIYA_MAP: Record<string, number> = {
-  א: 1, ב: 2, ג: 3, ד: 4, ה: 5, ו: 6, ז: 7, ח: 8, ט: 9,
-  י: 10, כ: 20, ך: 20, ל: 30, מ: 40, ם: 40, נ: 50, ן: 50,
-  ס: 60, ע: 70, פ: 80, ף: 80, צ: 90, ץ: 90, ק: 100, ר: 200, ש: 300, ת: 400,
-};
-
-export function hebrewGematriya(str: string): number {
-  if (!str) return 0;
-  const clean = str.replace(/["'״׳]/g, "").trim();
-  let sum = 0;
-  for (const ch of clean) {
-    if (GEMATRIYA_MAP[ch]) sum += GEMATRIYA_MAP[ch];
-    else return 0;
-  }
-  return sum;
-}
-
-export function torahNaturalVolumeRank(val: unknown): number {
-  if (!val) return 9999;
-  const s = String(val).trim();
-  if (!s) return 9999;
-  const numMatch = s.match(/\d+/);
-  if (numMatch) return parseInt(numMatch[0], 10);
-  const tokenMatch = s.replace(/^(חלק|כרך|ספר|ח['"״׳]|כ['"״׳])\s*/i, "").trim();
-  const firstWord = tokenMatch.split(/[\s\-–—]/)[0];
-  const g = hebrewGematriya(firstWord);
-  if (g > 0) return g;
-  return 9999;
-}
-
-export function torahNaturalVolumeSort(a: unknown, b: unknown): number {
-  const ra = torahNaturalVolumeRank(a);
-  const rb = torahNaturalVolumeRank(b);
-  if (ra !== rb) return ra - rb;
-  return String(a || "").localeCompare(String(b || ""), "he");
-}
+export { hebrewGematriya, torahNaturalVolumeRank, torahNaturalVolumeSort, compareSetBooks };
 
 export interface MobileSetVolumeGroup {
   volumeLabel: string;
+  subSeriesLabel: string;
+  minGlobalNumber: number | null;
+  coverageSummary: string;
   books: BookDoc[];
   totalCopies: number;
   availableCount: number;
@@ -284,36 +302,105 @@ export interface MobileSetVolumeGroup {
   locationSummary: string;
 }
 
-export function groupMobileSetVolumes(books: BookDoc[]): MobileSetVolumeGroup[] {
+export interface MobileSetSubSeriesSection {
+  subSeriesLabel: string;
+  volumes: MobileSetVolumeGroup[];
+  totalBooks: number;
+}
+
+export function groupMobileSetVolumes(
+  books: BookDoc[],
+  customRules?: VolumeNotationRule[]
+): MobileSetVolumeGroup[] {
   const map = new Map<string, BookDoc[]>();
   for (const b of books) {
-    const key = (b.volume || "").trim() || "ללא ציון כרך";
+    const sub = String(b.sub_series || "").trim();
+    const vol = String(b.volume || "").trim() || "ללא ציון כרך";
+    const key = `${sub}\u0001${vol}`;
     const arr = map.get(key) || [];
     arr.push(b);
     map.set(key, arr);
   }
   const groups: MobileSetVolumeGroup[] = [];
-  for (const [volumeLabel, list] of map.entries()) {
-    const availableCount = list.filter((x) => x.status === "available").length;
-    const loanedCount = list.filter((x) => x.status === "loaned").length;
-    const otherCount = list.length - availableCount - loanedCount;
+  for (const [, list] of map.entries()) {
+    const sortedList = [...list].sort((a, b) => compareSetBooks(a, b, customRules));
+    const rep = sortedList[0];
+    const volumeLabel = String(rep.volume || "").trim() || "ללא ציון כרך";
+    const subSeriesLabel = String(rep.sub_series || "").trim();
+    const globalNums = sortedList
+      .map((x) => (x.set_global_number != null && Number.isFinite(Number(x.set_global_number)) ? Number(x.set_global_number) : null))
+      .filter((n): n is number => n != null);
+    const minGlobalNumber = globalNums.length > 0 ? Math.min(...globalNums) : null;
+    const covs = Array.from(new Set(sortedList.map((x) => String(x.coverage_range || "").trim()).filter(Boolean)));
+    const availableCount = sortedList.filter((x) => x.status === "available").length;
+    const loanedCount = sortedList.filter((x) => x.status === "loaned").length;
+    const otherCount = sortedList.length - availableCount - loanedCount;
     const locs = Array.from(
       new Set(
-        list
+        sortedList
           .filter((x) => x.cabinet_code)
           .map((x) => `ארון ${x.cabinet_code}${x.shelf_number ? ` מדף ${x.shelf_number}` : ""}`)
       )
     );
     groups.push({
       volumeLabel,
-      books: list,
-      totalCopies: list.length,
+      subSeriesLabel,
+      minGlobalNumber,
+      coverageSummary: covs.join(" · "),
+      books: sortedList,
+      totalCopies: sortedList.length,
       availableCount,
       loanedCount,
       otherCount,
       locationSummary: locs.length > 0 ? locs.join(" / ") : "לא שויך",
     });
   }
-  groups.sort((a, b) => torahNaturalVolumeSort(a.volumeLabel, b.volumeLabel));
+  groups.sort((a, b) =>
+    compareSetBooks(
+      {
+        volume: a.volumeLabel,
+        sub_series: a.subSeriesLabel,
+        set_global_number: a.minGlobalNumber,
+        title: a.books[0]?.title,
+        barcode: a.books[0]?.barcode,
+      },
+      {
+        volume: b.volumeLabel,
+        sub_series: b.subSeriesLabel,
+        set_global_number: b.minGlobalNumber,
+        title: b.books[0]?.title,
+        barcode: b.books[0]?.barcode,
+      },
+      customRules
+    )
+  );
   return groups;
+}
+
+export function groupMobileSetBySubSeries(
+  books: BookDoc[],
+  customRules?: VolumeNotationRule[]
+): MobileSetSubSeriesSection[] {
+  const volumes = groupMobileSetVolumes(books, customRules);
+  const bySub = new Map<string, MobileSetVolumeGroup[]>();
+  for (const v of volumes) {
+    const key = v.subSeriesLabel || "";
+    const arr = bySub.get(key) || [];
+    arr.push(v);
+    bySub.set(key, arr);
+  }
+  const sections: MobileSetSubSeriesSection[] = [];
+  for (const [subSeriesLabel, vols] of bySub.entries()) {
+    const totalBooks = vols.reduce((acc, g) => acc + g.totalCopies, 0);
+    sections.push({ subSeriesLabel, volumes: vols, totalBooks });
+  }
+  sections.sort((a, b) => {
+    const ga = a.volumes[0]?.minGlobalNumber ?? null;
+    const gb = b.volumes[0]?.minGlobalNumber ?? null;
+    if (ga != null && gb != null && ga !== gb) return ga - gb;
+    if (!a.subSeriesLabel && b.subSeriesLabel) return 1;
+    if (a.subSeriesLabel && !b.subSeriesLabel) return -1;
+    return a.subSeriesLabel.localeCompare(b.subSeriesLabel, "he");
+  });
+  return sections;
 }

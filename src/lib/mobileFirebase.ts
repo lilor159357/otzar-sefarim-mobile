@@ -289,6 +289,8 @@ export class MobileOtzarClient {
         y: Number(raw.y) || 40,
         width: Number(raw.width) || 150,
         height: Number(raw.height) || 64,
+        width_cm: raw.width_cm != null ? Number(raw.width_cm) : null,
+        depth_cm: raw.depth_cm != null ? Number(raw.depth_cm) : null,
         rotation: Number(raw.rotation) || 0,
         updated_at: updatedAt,
         deleted_at: deletedAt,
@@ -310,6 +312,10 @@ export class MobileOtzarClient {
         barcode: String(raw.barcode || ""),
         barcode_status: String(raw.barcode_status || "assigned"),
         title: String(raw.title || ""),
+        set_name: raw.set_name ? String(raw.set_name) : undefined,
+        sub_series: raw.sub_series ? String(raw.sub_series) : undefined,
+        set_global_number: raw.set_global_number != null ? Number(raw.set_global_number) : null,
+        coverage_range: raw.coverage_range ? String(raw.coverage_range) : undefined,
         author: String(raw.author || ""),
         volume: String(raw.volume || ""),
         publisher: String(raw.publisher || ""),
@@ -324,6 +330,7 @@ export class MobileOtzarClient {
         status: String(raw.status || "available"),
         updated_at: updatedAt,
         deleted_at: deletedAt,
+        normalized_search: raw.normalized_search ? String(raw.normalized_search) : undefined,
       };
     } else if (entity === "loan") {
       this.cache.loans[syncId] = {
@@ -352,6 +359,10 @@ export class MobileOtzarClient {
           library_name: String(m.library_name || this.cache.meta.library_name || "אוצר ספרים"),
           default_loan_days: Number(m.default_loan_days) || 14,
           map_entrance: m.map_entrance || this.cache.meta.map_entrance,
+          room_dimensions: m.room_dimensions || this.cache.meta.room_dimensions,
+          volume_notation_rules: Array.isArray(m.volume_notation_rules)
+            ? m.volume_notation_rules
+            : this.cache.meta.volume_notation_rules,
           updated_at: String(m.updated_at || ""),
         };
       }

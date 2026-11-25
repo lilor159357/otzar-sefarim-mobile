@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Search, ScanLine, Map as MapIcon, X, BookOpen, ArrowLeftRight, MapPin, Layers, ChevronDown, ChevronUp } from "lucide-react";
 import type { BookDoc, BorrowerDoc, CabinetDoc, LibraryMetaDoc, LoanDoc } from "../types.ts";
-import { searchMobileBooks, groupMobileSetVolumes } from "../lib/torahSearch.ts";
+import { searchMobileBooks, groupMobileSetBySubSeries, type MobileSetSubSeriesSection, type MobileSetVolumeGroup } from "../lib/torahSearch.ts";
 import { useStrings } from "../lib/stringsContext.tsx";
 import { LibraryMap2D } from "./LibraryMap2D.tsx";
 import { BarcodeScannerModal } from "./BarcodeScannerModal.tsx";
@@ -264,7 +264,10 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                 ].filter(Boolean);
                 const metaParts = [
                   book.set_name && book.set_name !== book.title ? `סט: ${book.set_name}` : "",
+                  book.sub_series ? `תת-סדרה: ${book.sub_series}` : "",
                   book.volume ? `חלק ${book.volume}` : "",
+                  book.coverage_range ? `כיסוי: ${book.coverage_range}` : "",
+                  book.set_global_number != null ? `כרך #${book.set_global_number}` : "",
                   book.author,
                   locParts.join(" · "),
                   book.barcode ? `#${book.barcode}` : "",
@@ -339,6 +342,21 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
                     סט / סדרה: {selectedBook.set_name}
                   </p>
                 )}
+                {selectedBook.sub_series && (
+                  <p className="mt-0.5 text-xs font-semibold text-[var(--otzar-text)]">
+                    תת-סדרה / מסכת: {selectedBook.sub_series}
+                  </p>
+                )}
+                {selectedBook.coverage_range && (
+                  <p className="mt-0.5 text-xs font-semibold text-[var(--otzar-accent)]">
+                    כיסוי סימנים / דפים: {selectedBook.coverage_range}
+                  </p>
+                )}
+                {selectedBook.set_global_number != null && (
+                  <p className="mt-0.5 text-xs text-[var(--otzar-text-muted)]">
+                    מספר כרך כללי: #{selectedBook.set_global_number}
+                  </p>
+                )}
                 <p className="mt-0.5 text-sm text-[var(--otzar-text-muted)]">
                   {[selectedBook.author, selectedBook.publisher, selectedBook.pub_year]
                     .filter(Boolean)
@@ -403,86 +421,126 @@ export const SearchAndMapTab: React.FC<SearchAndMapTabProps> = ({
               </p>
             )}
 
-            {/* Other volumes in this Set (Torah Natural Sort + Copy Deduplication) */}
+            {/* Other volumes in this Set (Torah Natural Sort + Nested Sub-Series + Copy Deduplication) */}
             {selectedBook.set_name && (() => {
               const targetSet = selectedBook.set_name!.trim();
               const setBooks = books.filter((b) => (b.set_name || "").trim() === targetSet);
-              const groups = groupMobileSetVolumes(setBooks);
-              if (groups.length === 0 || (groups.length === 1 && groups[0].totalCopies <= 1)) return null;
+              const sections = groupMobileSetBySubSeries(setBooks, meta.volume_notation_rules);
+              const totalVolumes = sections.reduce((sum: number, s: MobileSetSubSeriesSection) => sum + s.volumes.length, 0);
+              if (totalVolumes === 0 || (totalVolumes === 1 && sections[0].volumes[0].totalCopies <= 1)) return null;
+
               return (
                 <div className="mt-4 space-y-2 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] p-3">
                   <div className="flex items-center justify-between text-xs font-bold text-[var(--otzar-text)]">
                     <span className="flex items-center gap-1.5">
                       <Layers className="h-4 w-4 text-[var(--otzar-accent)]" />
-                      כרכים נוספים בסט זה ({setBooks.length} עותקים ב-{groups.length} כרכים)
+                      כרכים נוספים בסט זה ({setBooks.length} עותקים ב-{totalVolumes} כרכים)
                     </span>
                   </div>
-                  <div className="divide-y divide-[var(--otzar-border-muted)] rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]">
-                    {groups.map((grp) => {
-                      const isExpanded = expandedVolGroup === grp.volumeLabel;
-                      const isCurrent = (selectedBook.volume || "").trim() === grp.volumeLabel;
-                      const statusParts = [
-                        grp.availableCount > 0 ? `${grp.availableCount} זמינים` : "",
-                        grp.loanedCount > 0 ? `${grp.loanedCount} מושאלים` : "",
-                        grp.otherCount > 0 ? `${grp.otherCount} עיון/אחר` : "",
-                      ].filter(Boolean);
-                      return (
-                        <div key={grp.volumeLabel} className="text-xs">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedVolGroup(isExpanded ? null : grp.volumeLabel)}
-                            className={`flex w-full items-center justify-between gap-2 px-3 py-2.5 text-right ${
-                              isCurrent ? "bg-[var(--otzar-accent-soft)]/50 font-bold" : ""
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <div className="font-semibold text-[var(--otzar-text)]">
-                                {grp.volumeLabel}
-                                {grp.totalCopies > 1 && (
-                                  <span className="mr-1.5 text-[var(--otzar-accent)]">
-                                    · {grp.totalCopies} עותקים ({statusParts.join(", ")})
-                                  </span>
-                                )}
-                                {grp.totalCopies === 1 && (
-                                  <span className="mr-1.5 font-normal text-[var(--otzar-text-muted)]">
-                                    · {statusMeta(grp.books[0].status).label}
-                                  </span>
+                  <div className="space-y-2">
+                    {sections.map((section: MobileSetSubSeriesSection, sIdx: number) => (
+                      <div key={section.subSeriesLabel || `sec-${sIdx}`} className="space-y-1">
+                        {section.subSeriesLabel && (
+                          <div className="px-1 text-[11px] font-bold text-[var(--otzar-accent)]">
+                            {section.subSeriesLabel}
+                          </div>
+                        )}
+                        <div className="divide-y divide-[var(--otzar-border-muted)] rounded-xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)]">
+                          {section.volumes.map((grp: MobileSetVolumeGroup) => {
+                            const isExpanded = expandedVolGroup === `${grp.subSeriesLabel}_${grp.volumeLabel}`;
+                            const isCurrent =
+                              (selectedBook.volume || "").trim() === grp.volumeLabel &&
+                              String(selectedBook.sub_series || "").trim() === grp.subSeriesLabel;
+                            const statusParts = [
+                              grp.availableCount > 0 ? `${grp.availableCount} זמינים` : "",
+                              grp.loanedCount > 0 ? `${grp.loanedCount} מושאלים` : "",
+                              grp.otherCount > 0 ? `${grp.otherCount} עיון/אחר` : "",
+                            ].filter(Boolean);
+
+                            return (
+                              <div key={`${grp.subSeriesLabel}_${grp.volumeLabel}`} className="text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedVolGroup(
+                                      isExpanded ? null : `${grp.subSeriesLabel}_${grp.volumeLabel}`
+                                    )
+                                  }
+                                  className={`flex w-full items-center justify-between gap-2 px-3 py-2.5 text-right ${
+                                    isCurrent ? "bg-[var(--otzar-accent-soft)]/50 font-bold" : ""
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-[var(--otzar-text)]">
+                                      {grp.minGlobalNumber != null && (
+                                        <span className="ml-1 text-[11px] text-[var(--otzar-text-muted)] tabular-nums">
+                                          [#{grp.minGlobalNumber}]
+                                        </span>
+                                      )}
+                                      {grp.volumeLabel}
+                                      {grp.coverageSummary && (
+                                        <span className="mr-1 text-[11px] text-[var(--otzar-text-muted)]">
+                                          ({grp.coverageSummary})
+                                        </span>
+                                      )}
+                                      {grp.totalCopies > 1 && (
+                                        <span className="mr-1.5 text-[var(--otzar-accent)]">
+                                          · {grp.totalCopies} עותקים ({statusParts.join(", ")})
+                                        </span>
+                                      )}
+                                      {grp.totalCopies === 1 && (
+                                        <span className="mr-1.5 font-normal text-[var(--otzar-text-muted)]">
+                                          · {statusMeta(grp.books[0].status).label}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-[var(--otzar-text-muted)]">
+                                      {grp.locationSummary}
+                                    </div>
+                                  </div>
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-4 w-4 shrink-0" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4 shrink-0" />
+                                  )}
+                                </button>
+                                {isExpanded && (
+                                  <div className="space-y-1 border-t border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 py-2">
+                                    {grp.books.map((copy: BookDoc) => {
+                                      const cst = statusMeta(copy.status);
+                                      return (
+                                        <div
+                                          key={copy.sync_id}
+                                          className="flex items-center justify-between py-1"
+                                        >
+                                          <span className="tabular-nums text-[var(--otzar-text)]">
+                                            #{copy.barcode || "ללא ברקוד"} ·{" "}
+                                            <span className={cst.textClass}>{cst.label}</span>
+                                          </span>
+                                          {copy.sync_id !== selectedBook.sync_id && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedBook(copy);
+                                                setExpandedVolGroup(null);
+                                                setSheetShowMap(true);
+                                              }}
+                                              className="rounded-lg bg-[var(--otzar-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--otzar-accent)] border border-[var(--otzar-border-muted)]"
+                                            >
+                                              הצג עותק
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
                                 )}
                               </div>
-                              <div className="text-[11px] text-[var(--otzar-text-muted)]">{grp.locationSummary}</div>
-                            </div>
-                            {isExpanded ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-                          </button>
-                          {isExpanded && (
-                            <div className="space-y-1 border-t border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)] px-3 py-2">
-                              {grp.books.map((copy) => {
-                                const cst = statusMeta(copy.status);
-                                return (
-                                  <div key={copy.sync_id} className="flex items-center justify-between py-1">
-                                    <span className="tabular-nums text-[var(--otzar-text)]">
-                                      #{copy.barcode || "ללא ברקוד"} · <span className={cst.textClass}>{cst.label}</span>
-                                    </span>
-                                    {copy.sync_id !== selectedBook.sync_id && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedBook(copy);
-                                          setExpandedVolGroup(null);
-                                          setSheetShowMap(true);
-                                        }}
-                                        className="rounded-lg bg-[var(--otzar-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--otzar-accent)] border border-[var(--otzar-border-muted)]"
-                                      >
-                                        הצג עותק
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

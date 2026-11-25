@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import type { CabinetDoc, MapEntrance } from "../types.ts";
+import type { CabinetDoc, MapEntrance, RoomDimensions } from "../types.ts";
 
 export const MAP_WIDTH = 760;
 export const MAP_HEIGHT = 440;
@@ -11,6 +11,7 @@ interface LibraryMap2DProps {
   highlightedCabinetCode?: string | null;
   entrance?: MapEntrance;
   onSelectCabinet?: (cabinet: CabinetDoc) => void;
+  roomDimensions?: RoomDimensions;
   compact?: boolean;
 }
 
@@ -21,6 +22,7 @@ export const LibraryMap2D: React.FC<LibraryMap2DProps> = ({
   highlightedCabinetCode,
   entrance = { wall: "bottom", offset: 0.5 },
   onSelectCabinet,
+  roomDimensions,
   compact = false,
 }) => {
   const entranceCoords = useMemo(() => {
@@ -49,6 +51,16 @@ export const LibraryMap2D: React.FC<LibraryMap2DProps> = ({
 
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-surface-alt)]">
+      {roomDimensions && !compact && (
+        <div className="flex items-center justify-between border-b border-[var(--otzar-border-muted)] bg-[var(--otzar-surface)] px-3 py-1.5 text-xs text-[var(--otzar-text-muted)]">
+          <span className="font-semibold text-[var(--otzar-text)]">
+            מידות חדר: {roomDimensions.width_m}×{roomDimensions.length_m} מ׳
+          </span>
+          <span className="tabular-nums">
+            {(roomDimensions.width_m * roomDimensions.length_m).toFixed(1)} מ״ר
+          </span>
+        </div>
+      )}
       <svg
         viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
         className={`block w-full select-none ${compact ? "max-h-[240px]" : "max-h-[340px]"}`}
@@ -155,6 +167,19 @@ export const LibraryMap2D: React.FC<LibraryMap2DProps> = ({
                 {(cab.main_subject || `${cab.shelves_count} מדפים`).slice(0, 14)}
                 {count > 0 ? ` (${count})` : ""}
               </text>
+              {cab.height >= 70 && cab.width_cm && cab.depth_cm && (
+                <text
+                  x={cx}
+                  y={cy + 26}
+                  textAnchor="middle"
+                  fontSize="9.5"
+                  fontWeight="500"
+                  fill={isHighlighted ? "#ffedd5" : "var(--otzar-text-muted)"}
+                  opacity={0.85}
+                >
+                  {cab.width_cm}×{cab.depth_cm} ס״מ
+                </text>
+              )}
             </g>
           );
         })}

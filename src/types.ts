@@ -5,6 +5,18 @@ export interface MapEntrance {
   offset: number;
 }
 
+export interface RoomDimensions {
+  width_m: number;
+  length_m: number;
+  wall_note?: string;
+}
+
+export interface VolumeNotationRule {
+  symbol: string;
+  rank: number;
+  label?: string;
+}
+
 export interface CabinetDoc {
   sync_id: string;
   code: string;
@@ -14,6 +26,8 @@ export interface CabinetDoc {
   y: number;
   width: number;
   height: number;
+  width_cm?: number | null;
+  depth_cm?: number | null;
   rotation: number;
   updated_at: string;
   deleted_at: string | null;
@@ -25,6 +39,9 @@ export interface BookDoc {
   barcode_status?: string;
   title: string;
   set_name?: string;
+  sub_series?: string;
+  set_global_number?: number | null;
+  coverage_range?: string;
   author: string;
   volume: string;
   publisher: string;
@@ -68,6 +85,8 @@ export interface LibraryMetaDoc {
   library_name: string;
   default_loan_days: number;
   map_entrance?: MapEntrance;
+  room_dimensions?: RoomDimensions;
+  volume_notation_rules?: VolumeNotationRule[];
   updated_at?: string;
 }
 

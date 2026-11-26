@@ -106,6 +106,7 @@ export interface MobileConnectionConfig {
   libraryName?: string;
   themePreset?: "default" | "classic-blue" | "forest-green";
   themeMode?: "light" | "dark";
+  forceLongPolling?: boolean;
 }
 
 export interface RelaySentItem {

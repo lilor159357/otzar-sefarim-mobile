@@ -283,7 +283,7 @@ export class MobileOtzarClient {
     try {
       const app = initializeApp(cfg.firebaseConfig, `otzar-mobile-${++this.appSeq}`);
       const auth = getAuth(app);
-      const fsClient = initializeFirestore(app, { experimentalForceLongPolling: true });
+      const fsClient = initializeFirestore(app, { experimentalForceLongPolling: cfg.forceLongPolling !== false });
       await signInWithEmailAndPassword(auth, cfg.email.trim(), cfg.password);
       this.authEmail = cfg.email.trim();
 

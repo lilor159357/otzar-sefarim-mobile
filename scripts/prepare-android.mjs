@@ -44,24 +44,52 @@ if (fs.existsSync(manifestPath)) {
   console.log("[prepare-android] Verified AndroidManifest permissions & networkSecurityConfig.");
 }
 
-// Trust user CA certificates (NetFree / Etrog / Rimon) for HTTPS & APK updates
+// Copy bundled root certificates (e.g. Etrog / Netspark RIM CA) from assets/certs/ to res/raw/
+const certsSrcDir = path.join(rootDir, "assets", "certs");
+const rawDir = path.join(androidDir, "app", "src", "main", "res", "raw");
+const certEntries = [];
+
+if (fs.existsSync(certsSrcDir)) {
+  fs.mkdirSync(rawDir, { recursive: true });
+  const files = fs.readdirSync(certsSrcDir);
+  for (const f of files) {
+    if (f.endsWith(".pem") || f.endsWith(".crt") || f.endsWith(".cer")) {
+      const baseName = f.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
+      const destFile = path.join(rawDir, `${baseName}.crt`);
+      fs.copyFileSync(path.join(certsSrcDir, f), destFile);
+      certEntries.push(baseName);
+      console.log(`[prepare-android] Bundled CA certificate ${f} -> @raw/${baseName}`);
+    }
+  }
+}
+
+// Trust system, user, and bundled raw CA certificates (NetFree / Etrog / Rimon) for Release & Debug HTTPS
 const xmlDir = path.join(androidDir, "app", "src", "main", "res", "xml");
 fs.mkdirSync(xmlDir, { recursive: true });
+const certAnchors = [
+  '            <certificates src="system" />',
+  '            <certificates src="user" />',
+  ...certEntries.map((c) => `            <certificates src="@raw/${c}" />`),
+].join("\n");
+
 fs.writeFileSync(
   path.join(xmlDir, "network_security_config.xml"),
   `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
-            <certificates src="system" />
-            <certificates src="user" />
+${certAnchors}
         </trust-anchors>
     </base-config>
-</network-security-config>
-`,
+    <debug-overrides>
+        <trust-anchors>
+${certAnchors}
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>`,
   "utf8"
 );
-console.log("[prepare-android] Configured network_security_config.xml (system + user CA).");
+console.log(`[prepare-android] Configured network_security_config.xml with system + user + ${certEntries.length} bundled CA certs.`);
 
 // Sync versionName & versionCode from package.json into android/app/build.gradle
 const pkgPath = path.join(rootDir, "package.json");

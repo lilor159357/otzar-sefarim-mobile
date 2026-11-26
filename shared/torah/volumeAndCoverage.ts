@@ -569,7 +569,7 @@ function detectUnitFromText(segment: string, fallback: CoverageUnit = "any"): Co
 export function parseCoverageRanges(coverageStr: string | undefined | null): ParsedCoverageSegment[] {
   const raw = String(coverageStr || "").trim();
   if (!raw) return [];
-  const parts = raw.split(/[,;/|]+/).map((p) => p.trim()).filter(Boolean);
+  const parts = raw.split(/[,;/|·\u00B7]+/).map((p) => p.trim()).filter(Boolean);
   const out: ParsedCoverageSegment[] = [];
   let lastUnit: CoverageUnit = "any";
 
@@ -703,4 +703,368 @@ export function matchCoverageRange(
     }
   }
   return best;
+}
+
+
+export function formatHebrewNumeralWithPunctuation(num: number): string {
+  const letters = numberToHebrewGematriya(num);
+  if (!letters || /^\d+$/.test(letters)) return letters;
+  if (letters.length === 1) return letters + "'";
+  return letters.slice(0, -1) + '"' + letters.slice(-1);
+}
+
+function unitPluralLabelHe(unit: CoverageUnit): string {
+  if (unit === "siman") return "סימנים";
+  if (unit === "daf") return "דפים";
+  if (unit === "perek") return "פרקים";
+  if (unit === "amud") return "עמודים";
+  return "";
+}
+
+function unitSingularLabelHe(unit: CoverageUnit): string {
+  if (unit === "siman") return "סימן";
+  if (unit === "daf") return "דף";
+  if (unit === "perek") return "פרק";
+  if (unit === "amud") return "עמוד";
+  return "";
+}
+
+export function inferDominantCoverageUnit(ranges: Array<string | undefined | null>): CoverageUnit {
+  const counts: Record<Exclude<CoverageUnit, "any">, number> = {
+    siman: 0,
+    daf: 0,
+    perek: 0,
+    amud: 0,
+  };
+  for (const r of ranges) {
+    const clean = String(r || "").trim();
+    if (!clean) continue;
+    const segs = parseCoverageRanges(clean);
+    for (const s of segs) {
+      if (s.unit !== "any") counts[s.unit]++;
+    }
+  }
+  let best: CoverageUnit = "any";
+  let bestCount = 0;
+  for (const u of ["siman", "daf", "perek", "amud"] as const) {
+    if (counts[u] > bestCount) {
+      bestCount = counts[u];
+      best = u;
+    }
+  }
+  return best;
+}
+
+export function normalizeCoverageRange(
+  raw: string | undefined | null,
+  preferredUnit: CoverageUnit = "any"
+): string {
+  const str = String(raw || "").trim();
+  if (!str) return "";
+  const segs = parseCoverageRanges(str);
+  if (segs.length === 0) {
+    // Standardize dashes & Hebrew punctuation to ASCII
+    return str
+      .replace(/([א-ת])['`׳]/g, "$1'")
+      .replace(/([א-ת])["״]/g, '$1"')
+      .replace(/\s*[-–—]+\s*/g, "-")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+  const formattedSegments = segs.map((seg) => {
+    const unit = seg.unit !== "any" ? seg.unit : preferredUnit;
+    const startHeb = formatHebrewNumeralWithPunctuation(seg.start);
+    const endHeb = formatHebrewNumeralWithPunctuation(seg.end);
+    if (seg.start === seg.end) {
+      const prefix = unitSingularLabelHe(unit);
+      return prefix ? `${prefix} ${startHeb}` : startHeb;
+    }
+    const prefix = unitPluralLabelHe(unit);
+    return prefix ? `${prefix} ${startHeb}-${endHeb}` : `${startHeb}-${endHeb}`;
+  });
+  return Array.from(new Set(formattedSegments)).join(" · ");
+}
+
+export function extractVolumeNumberIndex(
+  volume: string | undefined | null,
+  setGlobalNumber?: number | null
+): number | null {
+  const s = String(volume || "").trim();
+  if (s) {
+    const cleaned = s
+      .replace(/^(כרך|חלק|ספר|כ['"״׳]|ח['"״׳])\s+/i, "")
+      .replace(/["'״׳]/g, "")
+      .trim();
+    // Avoid matching full tractate / Chumash names as volume numbers
+    const hasPrefix = /^(כרך|חלק|ספר|כ['"״׳]|ח['"״׳])\s+/i.test(s);
+    if (/^\d{1,3}$/.test(cleaned)) {
+      const n = parseInt(cleaned, 10);
+      if (n > 0 && n <= 200) return n;
+    }
+    const roman = parseRomanNumeral(cleaned);
+    if (roman > 0 && roman <= 100) return roman;
+    // Only interpret Hebrew letters as a volume number if <= 3 letters AND (hasPrefix or single/2-letter gematria <= 60)
+    if (/^[א-ת]{1,3}$/.test(cleaned)) {
+      const g = hebrewGematriya(cleaned);
+      if (g > 0 && (hasPrefix || g <= 60) && torahSubSeriesRank(cleaned) === 999999) {
+        return g;
+      }
+    }
+    // Check explicit trailing volume number after dash e.g. "בראשית / חלק א'" or "מסכת שבת - כרך ג'"
+    const tail = s.match(/(?:כרך|חלק|ספר)\s+([א-ת]{1,3}['"״׳]?|\d{1,3})\s*$/);
+    if (tail) {
+      const tok = tail[1].replace(/["'״׳]/g, "");
+      if (/^\d+$/.test(tok)) {
+        const n = parseInt(tok, 10);
+        if (n > 0 && n <= 200) return n;
+      }
+      const g = hebrewGematriya(tok);
+      if (g > 0 && g <= 100) return g;
+    }
+  }
+  if (setGlobalNumber != null && Number.isFinite(Number(setGlobalNumber)) && Number(setGlobalNumber) > 0 && Number(setGlobalNumber) <= 200) {
+    return Math.round(Number(setGlobalNumber));
+  }
+  return null;
+}
+
+export function buildMissingVolumeLabel(index: number, sampleVolume?: string): string {
+  const sample = String(sampleVolume || "").trim();
+  if (/^\d+$/.test(sample)) return String(index);
+  if (/^חלק\s+/.test(sample)) return `חלק ${formatHebrewNumeralWithPunctuation(index)}`;
+  if (/^ספר\s+/.test(sample)) return `ספר ${formatHebrewNumeralWithPunctuation(index)}`;
+  return `כרך ${formatHebrewNumeralWithPunctuation(index)}`;
+}
+
+export interface MissingVolumeSlot {
+  key: string;
+  setName: string;
+  subSeries: string;
+  slotType: "volume" | "global";
+  index: number;
+  suggestedVolume: string;
+  suggestedGlobalNumber: number | null;
+  ignored: boolean;
+}
+
+export function makeMissingVolumeIgnoreKey(
+  setName: string,
+  subSeries: string,
+  slotType: "volume" | "global",
+  index: number
+): string {
+  return `${setName.trim().toLowerCase()}::${subSeries.trim().toLowerCase()}::${slotType}::${index}`;
+}
+
+export function computeMissingSetSlots(
+  books: Array<{
+    set_name?: string;
+    sub_series?: string;
+    volume?: string;
+    set_global_number?: number | null;
+  }>,
+  setName: string,
+  ignoredKeys?: Set<string>
+): MissingVolumeSlot[] {
+  const cleanSet = String(setName || "").trim();
+  if (!cleanSet || !Array.isArray(books) || books.length === 0) return [];
+  const slots: MissingVolumeSlot[] = [];
+  const seenKeys = new Set<string>();
+
+  // 1. Per sub_series volume sequence gaps (1..maxVolIdx)
+  const bySub = new Map<string, typeof books>();
+  for (const b of books) {
+    const sub = String(b.sub_series || "").trim();
+    const arr = bySub.get(sub) || [];
+    arr.push(b);
+    bySub.set(sub, arr);
+  }
+
+  const coveredGlobalNumbers = new Set<number>();
+  for (const b of books) {
+    const gn = b.set_global_number != null ? Number(b.set_global_number) : 0;
+    if (Number.isFinite(gn) && gn > 0) coveredGlobalNumbers.add(Math.round(gn));
+  }
+
+  for (const [subSeries, list] of bySub.entries()) {
+    const presentVolIndices = new Set<number>();
+    let sampleVol = "";
+    for (const b of list) {
+      if (!sampleVol && String(b.volume || "").trim()) sampleVol = String(b.volume || "").trim();
+      const idx = extractVolumeNumberIndex(b.volume, null);
+      if (idx != null && idx > 0) presentVolIndices.add(idx);
+    }
+    if (presentVolIndices.size === 0) continue;
+    const maxVol = Math.max(...Array.from(presentVolIndices));
+    if (maxVol < 2 || maxVol > 120) continue;
+    for (let i = 1; i <= maxVol; i++) {
+      if (presentVolIndices.has(i)) continue;
+      const key = makeMissingVolumeIgnoreKey(cleanSet, subSeries, "volume", i);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      slots.push({
+        key,
+        setName: cleanSet,
+        subSeries,
+        slotType: "volume",
+        index: i,
+        suggestedVolume: buildMissingVolumeLabel(i, sampleVol),
+        suggestedGlobalNumber: subSeries === "" && coveredGlobalNumbers.size > 0 ? i : null,
+        ignored: Boolean(ignoredKeys?.has(key)),
+      });
+    }
+  }
+
+  // 2. Overall set_global_number sequence gaps across the whole set (when set_global_number is used)
+  if (coveredGlobalNumbers.size > 0) {
+    const maxGlobal = Math.max(...Array.from(coveredGlobalNumbers));
+    if (maxGlobal >= 2 && maxGlobal <= 150) {
+      let sampleGlobalVol = "";
+      for (const b of books) {
+        if (!sampleGlobalVol && String(b.volume || "").trim()) sampleGlobalVol = String(b.volume || "").trim();
+      }
+      for (let g = 1; g <= maxGlobal; g++) {
+        if (coveredGlobalNumbers.has(g)) continue;
+        const rootVolKey = makeMissingVolumeIgnoreKey(cleanSet, "", "volume", g);
+        if (seenKeys.has(rootVolKey)) continue;
+        const gKey = makeMissingVolumeIgnoreKey(cleanSet, "", "global", g);
+        if (seenKeys.has(gKey)) continue;
+        seenKeys.add(gKey);
+        slots.push({
+          key: gKey,
+          setName: cleanSet,
+          subSeries: "",
+          slotType: "global",
+          index: g,
+          suggestedVolume: bySub.size <= 1 ? buildMissingVolumeLabel(g, sampleGlobalVol) : "",
+          suggestedGlobalNumber: g,
+          ignored: Boolean(ignoredKeys?.has(gKey)),
+        });
+      }
+    }
+  }
+
+  return slots;
+}
+
+export function shouldSuppressSingleVolumeLabel(
+  book: {
+    set_name?: string;
+    sub_series?: string;
+    volume?: string;
+    coverage_range?: string;
+    title?: string;
+  },
+  sameSetBooks?: Array<{
+    sub_series?: string;
+    volume?: string;
+    coverage_range?: string;
+    title?: string;
+  }>
+): boolean {
+  const vol = String(book.volume || "").trim();
+  if (!vol) return false;
+  const cov = String(book.coverage_range || "").trim();
+  if (cov) return false;
+
+  const sub = String(book.sub_series || "").trim();
+  const setBooks = Array.isArray(sameSetBooks) ? sameSetBooks : [];
+
+  if (sub) {
+    const siblings = setBooks.filter((b) => String(b.sub_series || "").trim() === sub);
+    if (siblings.length <= 1) return true;
+    const distinctVols = new Set(siblings.map((b) => String(b.volume || "").trim()).filter(Boolean));
+    const anyCov = siblings.some((b) => Boolean(String(b.coverage_range || "").trim()));
+    if (distinctVols.size <= 1 && !anyCov) return true;
+    return false;
+  }
+
+  // When sub_series is empty, check if volume is just a tractate / Chumash name without distinct numerals
+  if (/^(?:כרך|חלק|ספר)?\s*(?:מסכת|חומש|סדר)?\s*[א-ת]+/i.test(vol)) {
+    const volWithoutPrefix = vol.replace(/^(?:כרך|חלק|ספר|מסכת|חומש)\s+/g, "").trim();
+    if (torahSubSeriesRank(volWithoutPrefix) < 999999 || torahSubSeriesRank(vol) < 999999) {
+      return true;
+    }
+  }
+
+  if (setBooks.length > 0) {
+    const allSubs = setBooks.map((b) => String(b.sub_series || "").trim()).filter(Boolean);
+    if (allSubs.length >= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export interface TitleTemplateDerivationParams {
+  setName: string;
+  subSeries?: string;
+  volume?: string;
+  coverageRange?: string;
+  sampleBooks?: Array<{
+    title?: string;
+    set_name?: string;
+    sub_series?: string;
+    volume?: string;
+    coverage_range?: string;
+  }>;
+}
+
+export function deriveTitleFromSetTemplate(params: TitleTemplateDerivationParams): string {
+  const cleanSet = String(params.setName || "").trim();
+  const cleanSub = String(params.subSeries || "").trim();
+  let cleanVol = String(params.volume || "").trim();
+  const cleanCov = String(params.coverageRange || "").trim();
+  const samples = Array.isArray(params.sampleBooks) ? params.sampleBooks : [];
+
+  if (!cleanSet) {
+    if (cleanSub && cleanVol) return `${cleanSub} · ${cleanVol}`;
+    return cleanSub || cleanVol || "";
+  }
+
+  if (cleanVol && shouldSuppressSingleVolumeLabel(
+    { set_name: cleanSet, sub_series: cleanSub, volume: cleanVol, coverage_range: cleanCov },
+    samples
+  )) {
+    cleanVol = "";
+  }
+
+  const validTitles = samples
+    .map((s) => String(s.title || "").trim())
+    .filter((t) => t.length > 0 && t.startsWith(cleanSet));
+
+  if (validTitles.length > 0) {
+    let sampleSep = " · ";
+    const firstSample = validTitles[0];
+    const afterSet = firstSample.slice(cleanSet.length).trim();
+    if (afterSet.startsWith("·")) sampleSep = " · ";
+    else if (afterSet.startsWith("-") || afterSet.startsWith("–") || afterSet.startsWith("—")) sampleSep = " - ";
+    else if (afterSet.startsWith("/")) sampleSep = " / ";
+
+    if (cleanSub && cleanVol) {
+      if (firstSample.includes("(") && firstSample.includes(")") && firstSample.includes(cleanSub)) {
+        return `${cleanSet}${sampleSep}${cleanSub} (${cleanVol})`;
+      }
+      return `${cleanSet}${sampleSep}${cleanSub}${sampleSep}${cleanVol}`;
+    }
+    if (cleanSub) {
+      return `${cleanSet}${sampleSep}${cleanSub}`;
+    }
+    if (cleanVol) {
+      return `${cleanSet}${sampleSep}${cleanVol}`;
+    }
+    return cleanSet;
+  }
+
+  if (cleanSub && cleanVol) {
+    return `${cleanSet} · ${cleanSub} · ${cleanVol}`;
+  }
+  if (cleanSub) {
+    return `${cleanSet} · ${cleanSub}`;
+  }
+  if (cleanVol) {
+    return `${cleanSet} · ${cleanVol}`;
+  }
+  return cleanSet;
 }

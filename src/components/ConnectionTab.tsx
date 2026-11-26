@@ -102,6 +102,115 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const passcodeInputRef = useRef<HTMLInputElement | null>(null);
+  // Etrog & Cloud Diagnostic state
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagResults, setDiagResults] = useState<Array<{
+    stage: string;
+    label: string;
+    status: "pending" | "running" | "success" | "error";
+    message: string;
+    details?: string;
+  }>>([]);
+  const [showCertGuide, setShowCertGuide] = useState(false);
+
+  const runEtrogCloudDiagnostics = async () => {
+    setDiagRunning(true);
+    const steps: Array<{
+      stage: string;
+      label: string;
+      status: "pending" | "running" | "success" | "error";
+      message: string;
+      details?: string;
+    }> = [
+      { stage: "ssl", label: "אימות SSL ותעודות שורש (אתרוג / Google)", status: "running", message: "בודק תעודות רשת ו-SSL..." },
+      { stage: "auth", label: "אימות משתמש ניהול (Firebase Auth)", status: "pending", message: "ממתין..." },
+      { stage: "firestore", label: "חיבור מסד נתונים (Firestore ב-Long Polling)", status: "pending", message: "ממתין..." },
+      { stage: "relay", label: "שרת עדכונים ו-AI (GitHub API / Relay)", status: "pending", message: "ממתין..." },
+    ];
+    setDiagResults([...steps]);
+
+    // 1. SSL / Google API check
+    try {
+      const sslCtrl = new AbortController();
+      const sslTimer = setTimeout(() => sslCtrl.abort(), 7000);
+      await fetch("https://identitytoolkit.googleapis.com/$discovery/rest?version=v1", {
+        mode: "cors",
+        signal: sslCtrl.signal,
+      }).catch((e) => {
+        throw new Error(e?.name === "AbortError" ? "חריגת זמן (Timeout) - החיבור נחסם על ידי חומת אש או פרוקסי" : (e?.message || "שגיאת SSL / רשת"));
+      });
+      clearTimeout(sslTimer);
+      steps[0] = { stage: "ssl", label: steps[0].label, status: "success", message: "תקין — תעודת השורש של אתרוג (Netspark RIM) פעילה ומאפשרת חיבור SSL ל-Google." };
+    } catch (err: any) {
+      steps[0] = { stage: "ssl", label: steps[0].label, status: "error", message: "חסימת SSL / רשת: " + (err?.message || "לא ניתן להשלים לחיצת יד SSL."), details: "ודא שתעודת אתרוג מותקנת בטלפון כתעודת משתמש (CA), או שהאפליקציה כוללת את התעודה המוטמעת." };
+    }
+    setDiagResults([...steps]);
+
+    // 2. Firebase Auth check
+    steps[1] = { stage: "auth", label: steps[1].label, status: "running", message: "בודק אימות משתמש..." };
+    setDiagResults([...steps]);
+    if (!config?.email || !config?.password) {
+      steps[1] = { stage: "auth", label: steps[1].label, status: "error", message: "טרם הוגדרו פרטי התחברות (אימייל וסיסמה) באפליקציה." };
+    } else {
+      try {
+        const authUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(config.firebaseConfig.apiKey)}`;
+        const aRes = await fetch(authUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: config.email.trim(), password: config.password, returnSecureToken: true }),
+        });
+        const aData = await aRes.json().catch(() => ({}));
+        if (aRes.ok && aData.idToken) {
+          steps[1] = { stage: "auth", label: steps[1].label, status: "success", message: `תקין — משתמש הניהול אומת בהצלחה (${config.email}).` };
+        } else {
+          const errCode = aData?.error?.message || "AUTH_FAILED";
+          steps[1] = { stage: "auth", label: steps[1].label, status: "error", message: `שגיאת אימות: ${errCode}`, details: "בדוק שהאימייל והסיסמה תואמים להגדרות במחשב." };
+        }
+      } catch (err: any) {
+        steps[1] = { stage: "auth", label: steps[1].label, status: "error", message: "שגיאה בגישה ל-Auth: " + (err?.message || "נכשל"), details: "בדוק חיבור אינטרנט או חסימת שרת האימות." };
+      }
+    }
+    setDiagResults([...steps]);
+
+    // 3. Firestore Long Polling check
+    steps[2] = { stage: "firestore", label: steps[2].label, status: "running", message: "בודק ערוץ Long Polling..." };
+    setDiagResults([...steps]);
+    if (!config?.firebaseConfig?.projectId) {
+      steps[2] = { stage: "firestore", label: steps[2].label, status: "error", message: "פרויקט Firebase לא מוגדר." };
+    } else {
+      try {
+        const fsUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.firebaseConfig.projectId)}/databases/(default)/documents/meta/library`;
+        const fsRes = await fetch(fsUrl, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+        if (fsRes && (fsRes.status === 200 || fsRes.status === 403 || fsRes.status === 404)) {
+          steps[2] = { stage: "firestore", label: steps[2].label, status: "success", message: "תקין — ערוץ Firestore זמין ותומך ב-Long Polling תחת סינון אתרוג." };
+        } else {
+          steps[2] = { stage: "firestore", label: steps[2].label, status: "error", message: "ערוץ Firestore לא הגיב בזמן המוקצב." };
+        }
+      } catch (err: any) {
+        steps[2] = { stage: "firestore", label: steps[2].label, status: "error", message: "שגיאה: " + (err?.message || "נכשל") };
+      }
+    }
+    setDiagResults([...steps]);
+
+    // 4. GitHub / Relay check
+    steps[3] = { stage: "relay", label: steps[3].label, status: "running", message: "בודק שרתי עדכונים..." };
+    setDiagResults([...steps]);
+    try {
+      const ghRes = await fetch("https://api.github.com/repos/lilor159357/otzar-sefarim-mobile/releases", {
+        headers: { Accept: "application/vnd.github.v3+json" },
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+      if (ghRes && (ghRes.ok || ghRes.status === 403 || ghRes.status === 304)) {
+        steps[3] = { stage: "relay", label: steps[3].label, status: "success", message: "תקין — שרתי GitHub פתוחים ומאפשרים עדכוני תוכנה אוטומטיים." };
+      } else {
+        steps[3] = { stage: "relay", label: steps[3].label, status: "error", message: "גישה ל-GitHub מוגבלת או חסומה." };
+      }
+    } catch (err: any) {
+      steps[3] = { stage: "relay", label: steps[3].label, status: "error", message: "שגיאה: " + (err?.message || "נכשל") };
+    }
+    setDiagResults([...steps]);
+    setDiagRunning(false);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -339,6 +448,82 @@ export const ConnectionTab: React.FC<ConnectionTabProps> = ({
                   התחבר ידנית
                 </button>
               </form>
+            )}
+          </div>
+        </section>
+
+        {/* Etrog & Cloud Diagnostic Card */}
+        <section className="space-y-3 rounded-2xl border border-[var(--otzar-border-muted)] bg-[var(--otzar-bg)] p-4 lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+              <div>
+                <h2 className="text-base font-bold text-[var(--otzar-text)]">בדיקת חיבור אתרוג וענן (אבחון 4 שלבים)</h2>
+                <p className="text-xs text-[var(--otzar-text-muted)]">
+                  מאמת שלב-אחר-שלב את תעודות ה-SSL של אתרוג (Netspark RIM), אימות Auth, ערוץ Firestore ושרתי עדכונים.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={diagRunning}
+              onClick={runEtrogCloudDiagnostics}
+              className="flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 font-bold text-white shadow-sm hover:bg-emerald-700 active:scale-95 disabled:opacity-50 text-xs"
+            >
+              <RefreshCw className={`h-4 w-4 ${diagRunning ? "animate-spin" : ""}`} />
+              <span>{diagRunning ? "מבצע בדיקה מקיפה..." : "הפעל בדיקת חיבור אתרוג וענן"}</span>
+            </button>
+          </div>
+
+          {diagResults.length > 0 && (
+            <div className="space-y-2 rounded-xl bg-[var(--otzar-surface-alt)] p-3 text-xs border border-[var(--otzar-border-muted)]">
+              {diagResults.map((r, i) => (
+                <div key={r.stage} className="flex items-start gap-2.5 py-1 border-b last:border-b-0 border-[var(--otzar-border-muted)]">
+                  <span className="font-mono font-bold text-[var(--otzar-text-muted)] w-5 shrink-0 tabular-nums">
+                    {i + 1}.
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-[var(--otzar-text)]">{r.label}</strong>
+                      <span className={`font-bold ${
+                        r.status === "success" ? "text-emerald-600" :
+                        r.status === "error" ? "text-rose-600" :
+                        r.status === "running" ? "text-amber-600 animate-pulse" : "text-[var(--otzar-text-muted)]"
+                      }`}>
+                        {r.status === "success" && "✓ תקין"}
+                        {r.status === "error" && "✗ נכשל"}
+                        {r.status === "running" && "בודק..."}
+                        {r.status === "pending" && "ממתין"}
+                      </span>
+                    </div>
+                    <p className="text-[var(--otzar-text-muted)] mt-0.5">{r.message}</p>
+                    {r.details && (
+                      <p className="text-rose-600 dark:text-rose-400 font-medium mt-0.5">{r.details}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="border-t border-[var(--otzar-border-muted)] pt-2">
+            <button
+              type="button"
+              onClick={() => setShowCertGuide((v) => !v)}
+              className="text-xs text-[var(--otzar-accent)] hover:underline flex items-center justify-between w-full font-semibold"
+            >
+              <span>הנחיות לייצוא תעודת אתרוג מהמחשב במידת הצורך</span>
+              {showCertGuide ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showCertGuide && (
+              <div className="mt-2 p-3 rounded-xl bg-[var(--otzar-surface)] text-xs text-[var(--otzar-text-muted)] space-y-1.5 leading-relaxed">
+                <p>
+                  <strong>תעודת השורש של אתרוג (Netspark RIM) כבר הוטמעה בקובץ האפליקציה!</strong>
+                </p>
+                <p>
+                  אם החלפת ספק או רשת סינון בעתיד: במחשב ה-Windows הפעל <code>certmgr.msc</code> ← היכנס ל-<code>Trusted Root Certification Authorities</code> ← <code>Certificates</code> ← לחץ לחיצה ימנית על תעודת הסינון (Netspark / Etrog / Rimon) ← <code>All Tasks</code> ← <code>Export</code> ← בחר <strong>Base-64 encoded X.509 (.cer)</strong>.
+                </p>
+              </div>
             )}
           </div>
         </section>

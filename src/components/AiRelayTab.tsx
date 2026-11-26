@@ -695,6 +695,26 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
             )}
           </div>
           {renderExistingSetPicker()}
+          {(presetSetName.trim() || cabinetSyncId) && (
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-[var(--otzar-border-muted)]">
+              <span className="text-[11px] text-[var(--otzar-text-muted)]">
+                הסט והמיקום יישארו מסומנים גם לאחר השליחה
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPresetSetName("");
+                  setCabinetSyncId("");
+                  setShelfNumber(1);
+                  setUseShelf(true);
+                }}
+                className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-2.5 text-xs font-bold text-rose-700 dark:text-rose-300"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>נקה סט ומיקום</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 

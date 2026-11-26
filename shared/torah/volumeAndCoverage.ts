@@ -841,9 +841,14 @@ export interface MissingVolumeSlot {
   setName: string;
   subSeries: string;
   slotType: "volume" | "global";
+  kind?: "missing" | "anomaly";
   index: number;
+  gapSize?: number;
   suggestedVolume: string;
   suggestedGlobalNumber: number | null;
+  sourceBookBarcode?: string;
+  sourceBookTitle?: string;
+  anomalyMessage?: string;
   ignored: boolean;
 }
 
@@ -858,9 +863,12 @@ export function makeMissingVolumeIgnoreKey(
 
 export function computeMissingSetSlots(
   books: Array<{
+    barcode?: string;
+    title?: string;
     set_name?: string;
     sub_series?: string;
     volume?: string;
+    coverage_range?: string;
     set_global_number?: number | null;
   }>,
   setName: string,
@@ -868,11 +876,12 @@ export function computeMissingSetSlots(
 ): MissingVolumeSlot[] {
   const cleanSet = String(setName || "").trim();
   if (!cleanSet || !Array.isArray(books) || books.length === 0) return [];
+
   const slots: MissingVolumeSlot[] = [];
   const seenKeys = new Set<string>();
 
-  // 1. Per sub_series volume sequence gaps (1..maxVolIdx)
-  const bySub = new Map<string, typeof books>();
+  type BookEntry = (typeof books)[number];
+  const bySub = new Map<string, BookEntry[]>();
   for (const b of books) {
     const sub = String(b.sub_series || "").trim();
     const arr = bySub.get(sub) || [];
@@ -880,68 +889,169 @@ export function computeMissingSetSlots(
     bySub.set(sub, arr);
   }
 
-  const coveredGlobalNumbers = new Set<number>();
-  for (const b of books) {
-    const gn = b.set_global_number != null ? Number(b.set_global_number) : 0;
-    if (Number.isFinite(gn) && gn > 0) coveredGlobalNumbers.add(Math.round(gn));
+  // Detect consecutive single-book sub-series across the set (e.g., Chumashim Bereshit..Devarim where volume is חלק א'..ה')
+  const namedSubs = Array.from(bySub.entries()).filter(([s]) => s !== "");
+  const singleSubCandidates = namedSubs.filter(([, list]) => {
+    if (list.length !== 1) return false;
+    const b = list[0];
+    if (String(b.coverage_range || "").trim()) return false;
+    const idx = extractVolumeNumberIndex(b.volume, null);
+    return idx != null && idx > 0;
+  });
+  const distinctSingleSubIndices = new Set(
+    singleSubCandidates
+      .map(([, list]) => extractVolumeNumberIndex(list[0].volume, null))
+      .filter((n): n is number => n != null && n > 0)
+  );
+  const consecutiveSingleBookSubSeriesNames = new Set<string>();
+  const singleSubGlobalCandidates = new Map<number, BookEntry>();
+  if (
+    namedSubs.length >= 2 &&
+    singleSubCandidates.length >= 2 &&
+    distinctSingleSubIndices.size === singleSubCandidates.length
+  ) {
+    for (const [subName, list] of singleSubCandidates) {
+      consecutiveSingleBookSubSeriesNames.add(subName);
+      const idx = extractVolumeNumberIndex(list[0].volume, null)!;
+      if (!singleSubGlobalCandidates.has(idx)) {
+        singleSubGlobalCandidates.set(idx, list[0]);
+      }
+    }
   }
 
+  // Helper to find gaps vs. >20 gap anomalies from sorted index->sourceBook entries
+  const emitSequenceGapsAndAnomalies = (
+    indexToBook: Map<number, BookEntry>,
+    subSeries: string,
+    slotType: "volume" | "global",
+    sampleVol: string,
+    hasGlobalInSet: boolean,
+    maxAllowed: number
+  ) => {
+    const sortedEntries = Array.from(indexToBook.entries())
+      .filter(([idx]) => idx > 0 && idx <= maxAllowed)
+      .sort((a, b) => a[0] - b[0]);
+    if (sortedEntries.length === 0) return;
+    const maxIdx = sortedEntries[sortedEntries.length - 1][0];
+    if (maxIdx < 2) return;
+
+    let prev = 0;
+    for (const [currIdx, srcBook] of sortedEntries) {
+      const gap = currIdx - prev - 1;
+      const srcBarcode = String(srcBook.barcode || "").trim() || undefined;
+      const srcTitle = String(srcBook.title || "").trim() || undefined;
+      if (gap > 20) {
+        const aKey = makeMissingVolumeIgnoreKey(cleanSet, subSeries, slotType, currIdx);
+        if (!seenKeys.has(aKey)) {
+          seenKeys.add(aKey);
+          slots.push({
+            key: aKey,
+            setName: cleanSet,
+            subSeries,
+            slotType,
+            kind: "anomaly",
+            index: currIdx,
+            gapSize: gap,
+            suggestedVolume: buildMissingVolumeLabel(currIdx, sampleVol),
+            suggestedGlobalNumber: slotType === "global" ? currIdx : null,
+            sourceBookBarcode: srcBarcode,
+            sourceBookTitle: srcTitle,
+            anomalyMessage: `טעות מספור אפשרית בספר ${srcBarcode ? `#${srcBarcode}` : ""}${srcTitle ? ` (${srcTitle})` : ""} — פער של ${gap} כרכים לפני כרך ${currIdx}`,
+            ignored: Boolean(ignoredKeys?.has(aKey)),
+          });
+        }
+      } else if (gap > 0) {
+        for (let i = prev + 1; i < currIdx; i++) {
+          if (slotType === "global") {
+            const rootVolKey = makeMissingVolumeIgnoreKey(cleanSet, "", "volume", i);
+            if (seenKeys.has(rootVolKey)) continue;
+          }
+          const key = makeMissingVolumeIgnoreKey(cleanSet, subSeries, slotType, i);
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          slots.push({
+            key,
+            setName: cleanSet,
+            subSeries,
+            slotType,
+            kind: "missing",
+            index: i,
+            suggestedVolume:
+              slotType === "global" && bySub.size > 1 ? "" : buildMissingVolumeLabel(i, sampleVol),
+            suggestedGlobalNumber:
+              slotType === "global" ? i : subSeries === "" && hasGlobalInSet ? i : null,
+            sourceBookBarcode: srcBarcode,
+            sourceBookTitle: srcTitle,
+            ignored: Boolean(ignoredKeys?.has(key)),
+          });
+        }
+      }
+      prev = currIdx;
+    }
+  };
+
+  // Track global numbers across the set
+  const globalIndexToBook = new Map<number, BookEntry>();
+  let explicitGlobalCount = 0;
+  for (const b of books) {
+    const gn = b.set_global_number != null ? Number(b.set_global_number) : 0;
+    if (Number.isFinite(gn) && gn > 0) {
+      explicitGlobalCount += 1;
+      const rounded = Math.round(gn);
+      if (!globalIndexToBook.has(rounded)) globalIndexToBook.set(rounded, b);
+    }
+  }
+
+  // 1. Per sub_series volume sequence gaps (skipping consecutive single-book sub-series)
   for (const [subSeries, list] of bySub.entries()) {
-    const presentVolIndices = new Set<number>();
+    if (subSeries && consecutiveSingleBookSubSeriesNames.has(subSeries)) {
+      continue;
+    }
+    const volIndexToBook = new Map<number, BookEntry>();
     let sampleVol = "";
     for (const b of list) {
       if (!sampleVol && String(b.volume || "").trim()) sampleVol = String(b.volume || "").trim();
       const idx = extractVolumeNumberIndex(b.volume, null);
-      if (idx != null && idx > 0) presentVolIndices.add(idx);
+      if (idx != null && idx > 0 && !volIndexToBook.has(idx)) {
+        volIndexToBook.set(idx, b);
+      }
     }
-    if (presentVolIndices.size === 0) continue;
-    const maxVol = Math.max(...Array.from(presentVolIndices));
-    if (maxVol < 2 || maxVol > 120) continue;
-    for (let i = 1; i <= maxVol; i++) {
-      if (presentVolIndices.has(i)) continue;
-      const key = makeMissingVolumeIgnoreKey(cleanSet, subSeries, "volume", i);
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      slots.push({
-        key,
-        setName: cleanSet,
-        subSeries,
-        slotType: "volume",
-        index: i,
-        suggestedVolume: buildMissingVolumeLabel(i, sampleVol),
-        suggestedGlobalNumber: subSeries === "" && coveredGlobalNumbers.size > 0 ? i : null,
-        ignored: Boolean(ignoredKeys?.has(key)),
-      });
-    }
+    if (volIndexToBook.size === 0) continue;
+    emitSequenceGapsAndAnomalies(
+      volIndexToBook,
+      subSeries,
+      "volume",
+      sampleVol,
+      explicitGlobalCount > 0,
+      150
+    );
   }
 
-  // 2. Overall set_global_number sequence gaps across the whole set (when set_global_number is used)
-  if (coveredGlobalNumbers.size > 0) {
-    const maxGlobal = Math.max(...Array.from(coveredGlobalNumbers));
-    if (maxGlobal >= 2 && maxGlobal <= 150) {
-      let sampleGlobalVol = "";
-      for (const b of books) {
-        if (!sampleGlobalVol && String(b.volume || "").trim()) sampleGlobalVol = String(b.volume || "").trim();
-      }
-      for (let g = 1; g <= maxGlobal; g++) {
-        if (coveredGlobalNumbers.has(g)) continue;
-        const rootVolKey = makeMissingVolumeIgnoreKey(cleanSet, "", "volume", g);
-        if (seenKeys.has(rootVolKey)) continue;
-        const gKey = makeMissingVolumeIgnoreKey(cleanSet, "", "global", g);
-        if (seenKeys.has(gKey)) continue;
-        seenKeys.add(gKey);
-        slots.push({
-          key: gKey,
-          setName: cleanSet,
-          subSeries: "",
-          slotType: "global",
-          index: g,
-          suggestedVolume: bySub.size <= 1 ? buildMissingVolumeLabel(g, sampleGlobalVol) : "",
-          suggestedGlobalNumber: g,
-          ignored: Boolean(ignoredKeys?.has(gKey)),
-        });
+  // 2. Overall set_global_number sequence gaps across the whole set
+  // Only run when at least 50% of books in the set actually carry set_global_number (or consecutive single-book sub-series)
+  const useGlobalThreshold = explicitGlobalCount >= Math.ceil(books.length * 0.5);
+  const useSingleSubGlobal = consecutiveSingleBookSubSeriesNames.size >= 2 && namedSubs.length === consecutiveSingleBookSubSeriesNames.size;
+
+  if (useGlobalThreshold || useSingleSubGlobal) {
+    if (useSingleSubGlobal) {
+      for (const [idx, b] of singleSubGlobalCandidates.entries()) {
+        if (!globalIndexToBook.has(idx)) {
+          globalIndexToBook.set(idx, b);
+        }
       }
     }
+    let sampleGlobalVol = "";
+    for (const b of books) {
+      if (!sampleGlobalVol && String(b.volume || "").trim()) sampleGlobalVol = String(b.volume || "").trim();
+    }
+    emitSequenceGapsAndAnomalies(
+      globalIndexToBook,
+      "",
+      "global",
+      sampleGlobalVol,
+      true,
+      200
+    );
   }
 
   return slots;
@@ -1028,6 +1138,51 @@ export function deriveTitleFromSetTemplate(params: TitleTemplateDerivationParams
     samples
   )) {
     cleanVol = "";
+  }
+
+  // Check if existing sample books in the set omit volume from their title (e.g. "Set - מסכת ברכות")
+  if (cleanSub && cleanVol && samples.length > 0) {
+    const samplesWithSubAndVol = samples.filter(
+      (s) =>
+        String(s.title || "").trim().length > 0 &&
+        String(s.sub_series || "").trim().length > 0 &&
+        String(s.volume || "").trim().length > 0
+    );
+    const samplesIncludingVolInTitle = samplesWithSubAndVol.filter((s) => {
+      const st = String(s.title || "").trim();
+      const sv = String(s.volume || "").trim();
+      if (st.includes(sv)) return true;
+      const stripped = sv.replace(/^(?:כרך|חלק|ספר)\s+/g, "").trim();
+      return Boolean(
+        stripped &&
+          (st.endsWith(` ${stripped}`) ||
+            st.endsWith(`-${stripped}`) ||
+            st.includes(`(${stripped})`) ||
+            st.includes(`(${sv})`))
+      );
+    });
+    const anySampleEndsWithSub = samples.some((s) => {
+      const st = String(s.title || "").trim();
+      const ss = String(s.sub_series || "").trim();
+      return Boolean(st && ss && st.endsWith(ss));
+    });
+    const anySampleHasVolInTitle = samples.some((s) => {
+      const st = String(s.title || "").trim();
+      const sv = String(s.volume || "").trim();
+      if (!st || !sv) return false;
+      if (st.includes(sv)) return true;
+      const stripped = sv.replace(/^(?:כרך|חלק|ספר)\s+/g, "").trim();
+      return Boolean(
+        stripped &&
+          (st.endsWith(` ${stripped}`) || st.endsWith(`-${stripped}`) || st.includes(`(${stripped})`))
+      );
+    });
+    if (
+      (samplesWithSubAndVol.length > 0 && samplesIncludingVolInTitle.length === 0) ||
+      (anySampleEndsWithSub && !anySampleHasVolInTitle)
+    ) {
+      cleanVol = "";
+    }
   }
 
   const validTitles = samples

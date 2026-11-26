@@ -435,20 +435,38 @@ export const AiRelayTab: React.FC<AiRelayTabProps> = ({
       if (isShelf) {
         setShelfTitlePhotos([]);
         setShelfSpinePhotos([]);
-        setPresetSetName("");
       } else {
         setPhotos([]);
         if (stickySetEnabled) {
           setStickyBatchCount((c) => c + 1);
         }
       }
+      try {
+        localStorage.setItem(
+          STICKY_STORAGE_KEY,
+          JSON.stringify({
+            captureMode,
+            stickySetEnabled,
+            stickyBatchId,
+            stickyBatchCount: !isShelf && stickySetEnabled ? stickyBatchCount + 1 : stickyBatchCount,
+            presetSetName,
+            cabinetSyncId,
+            shelfNumber,
+            useShelf,
+          })
+        );
+      } catch {}
+      const keptInfo: string[] = [];
+      if (presetSetName.trim()) keptInfo.push(`סט "${presetSetName.trim()}"`);
+      if (selectedCabinet) keptInfo.push(`ארון ${selectedCabinet.code}${useShelf ? ` מדף ${shelfNumber}` : ""}`);
+      const keptSuffix = keptInfo.length > 0 ? ` (${keptInfo.join(" · ")} נשמרו לצילום הבא)` : "";
       setFeedback({
         type: "ok",
         text: isShelf
           ? shelfTitlePhotos.length === 0
-            ? `המשך הסט "${presetSetName.trim()}" (${shelfSpinePhotos.length} שדרות) נשלח לענן! המחשב ישלים את שאר הכרכים.`
-            : `סט המדף (${shelfTitlePhotos.length} שער/פרטים + ${shelfSpinePhotos.length} שדרות) נשלח לענן! המחשב יפרוס את כל הכרכים והעותקים אוטומטית.`
-          : "התמונות נשלחו לענן! תוכנת המחשב תקלוט אותן אוטומטית בתור הקטלוג.",
+            ? `המשך הסט "${presetSetName.trim()}" (${shelfSpinePhotos.length} שדרות) נשלח לענן!${keptSuffix}`
+            : `סט המדף (${shelfTitlePhotos.length} שער/פרטים + ${shelfSpinePhotos.length} שדרות) נשלח לענן!${keptSuffix}`
+          : `התמונות נשלחו לענן! תוכנת המחשב תקלוט אותן אוטומטית בתור הקטלוג.${keptSuffix}`,
       });
     } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : "שליחת התמונות נכשלה";
